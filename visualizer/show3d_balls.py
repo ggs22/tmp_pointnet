@@ -221,5 +221,3 @@ if __name__ == '__main__':
     pred = cmap[seg, :]
     showpoints(point_set, gt, c_pred=pred, waittime=0, showrot=False, magnifyBlue=0, freezerot=False,
                background=(255, 255, 255), normalizecolor=True, ballradius=opt.ballradius)
-
-
