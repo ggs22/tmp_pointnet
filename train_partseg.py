@@ -40,7 +40,7 @@ def inplace_relu(m):
 
 def to_categorical(y, num_classes):
     """ 1-hot encodes a tensor """
-    new_y = torch.eye(num_classes)[y.cpu().data.numpy(),]
+    new_y = torch.eye(num_classes)[y.cpu().data.numpy(), ]
     if (y.is_cuda):
         return new_y.cuda()
     return new_y
@@ -62,7 +62,10 @@ def parse_args():
     parser.add_argument('--lr_decay', type=float, default=0.5, help='decay rate for lr decay')
     parser.add_argument('--num_classes', type=int, default=2, help='number of classes')
     parser.add_argument('--num_parts', type=int, default=2, help='number of parts (contained by classes)')
-
+    parser.add_argument('--data_root', type=str, default='data/shapenetcore_partanno_segmentation_benchmark_v0_normal/',
+                        help='root directory for the dataset')
+    # TODO remove or re-work this argument
+    parser.add_argument('--channel_offset', type=int, default=0, help='adjust the input channels for convolution')
 
     return parser.parse_args()
 
@@ -103,7 +106,8 @@ def main(args):
     log_string('PARAMETER ...')
     log_string(args)
 
-    root = 'data/shapenetcore_partanno_segmentation_benchmark_v0_normal/'
+    '''DATA'''
+    root = args.data_root
 
     TRAIN_DATASET = PartNormalDataset(root=root, npoints=args.npoint, split='trainval', normal_channel=args.normal)
     trainDataLoader = torch.utils.data.DataLoader(TRAIN_DATASET, batch_size=args.batch_size, shuffle=True, drop_last=True)
@@ -120,7 +124,7 @@ def main(args):
     shutil.copy('models/%s.py' % args.model, str(exp_dir))
     shutil.copy('models/pointnet2_utils.py', str(exp_dir))
 
-    classifier = MODEL.get_model(num_part, normal_channel=args.normal).cuda()
+    classifier = MODEL.GetModel(num_part, normal_channel=args.normal, channels_offset=args.channel_offset).cuda()
     criterion = MODEL.get_loss().cuda()
     classifier.apply(inplace_relu)
 
@@ -171,16 +175,16 @@ def main(args):
     for epoch in range(start_epoch, args.epoch):
         mean_correct = []
 
-        log_string('Epoch %d (%d/%s):' % (global_epoch + 1, epoch + 1, args.epoch))
+        log_string(f'Epoch {global_epoch + 1} ({epoch + 1}/{args.epoch}):')
         '''Adjust learning rate and BN momentum'''
         lr = max(args.learning_rate * (args.lr_decay ** (epoch // args.step_size)), LEARNING_RATE_CLIP)
-        log_string('Learning rate:%f' % lr)
+        log_string(f'Learning rate:{lr}')
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
         momentum = MOMENTUM_ORIGINAL * (MOMENTUM_DECCAY ** (epoch // MOMENTUM_DECCAY_STEP))
         if momentum < 0.01:
             momentum = 0.01
-        print('BN momentum updated to: %f' % momentum)
+        print(f'BN momentum updated to: {momentum}')
         classifier = classifier.apply(lambda x: bn_momentum_adjust(x, momentum))
         classifier = classifier.train()
 
@@ -205,6 +209,13 @@ def main(args):
             loss = criterion(seg_pred, target, trans_feat)
             loss.backward()
             optimizer.step()
+
+            ''' lets output some sample for visialization '''
+            if i % 5 == 0:
+                tx = points.transpose(1, 2).cpu().numpy().squeeze()
+                ty = pred_choice.cpu().numpy().reshape((*pred_choice.shape, 1))
+                np.savetxt(fname=f'{exp_dir}{os.path.sep}train_sample_{i}.txt',
+                           X=np.concatenate([tx, ty], axis=1))
 
         train_instance_acc = np.mean(mean_correct)
         log_string('Train accuracy is: %.5f' % train_instance_acc)
@@ -238,6 +249,13 @@ def main(args):
                     cat = seg_label_to_cat[target[i, 0]]
                     logits = cur_pred_val_logits[i, :, :]
                     cur_pred_val[i, :] = np.argmax(logits[:, seg_classes[cat]], 1) + seg_classes[cat][0]
+
+                    ''' lets output some sample for visialization '''
+                    if batch_id % 2 == 0:
+                        tx = points.transpose(1, 2).cpu().numpy().squeeze()
+                        ty = cur_pred_val.reshape((cur_pred_val.shape[1], 1))
+                        np.savetxt(fname=f'{exp_dir}{os.path.sep}test_sample_{batch_id}.txt',
+                                   X=np.concatenate([tx, ty], axis=1))
 
                 correct = np.sum(cur_pred_val == target)
                 total_correct += correct

@@ -68,6 +68,7 @@ def main(args):
     log_string('PARAMETER ...')
     log_string(args)
 
+    '''DATA'''
     root = 'data/shapenetcore_partanno_segmentation_benchmark_v0_normal/'
 
     TEST_DATASET = PartNormalDataset(root=root, npoints=args.num_point, split='test', normal_channel=args.normal)

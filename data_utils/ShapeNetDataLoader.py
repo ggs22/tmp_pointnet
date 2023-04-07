@@ -75,11 +75,12 @@ class PartNormalDataset(Dataset):
             self.classes[i] = self.classes_original[i]
 
         # Mapping from category ('Chair') to a list of int [10,11,12,13] as segmentation labels
-        self.seg_classes = {'Earphone': [16, 17, 18], 'Motorbike': [30, 31, 32, 33, 34, 35], 'Rocket': [41, 42, 43],
-                            'Car': [8, 9, 10, 11], 'Laptop': [28, 29], 'Cap': [6, 7], 'Skateboard': [44, 45, 46],
-                            'Mug': [36, 37], 'Guitar': [19, 20, 21], 'Bag': [4, 5], 'Lamp': [24, 25, 26, 27],
-                            'Table': [47, 48, 49], 'Airplane': [0, 1, 2, 3], 'Pistol': [38, 39, 40],
-                            'Chair': [12, 13, 14, 15], 'Knife': [22, 23]}
+        # self.seg_classes = {'Earphone': [16, 17, 18], 'Motorbike': [30, 31, 32, 33, 34, 35], 'Rocket': [41, 42, 43],
+        #                     'Car': [8, 9, 10, 11], 'Laptop': [28, 29], 'Cap': [6, 7], 'Skateboard': [44, 45, 46],
+        #                     'Mug': [36, 37], 'Guitar': [19, 20, 21], 'Bag': [4, 5], 'Lamp': [24, 25, 26, 27],
+        #                     'Table': [47, 48, 49], 'Airplane': [0, 1, 2, 3], 'Pistol': [38, 39, 40],
+        #                     'Chair': [12, 13, 14, 15], 'Knife': [22, 23]}
+        self.seg_classes = {'beam': [0, 1]}
 
         # for cat in sorted(self.seg_classes.keys()):
         #     print(cat, self.seg_classes[cat])
@@ -91,11 +92,11 @@ class PartNormalDataset(Dataset):
         if index in self.cache:
             point_set, cls, seg = self.cache[index]
         else:
-            fn = self.datapath[index]
+            file_path = self.datapath[index]
             cat = self.datapath[index][0]
             cls = self.classes[cat]
             cls = np.array([cls]).astype(np.int32)
-            data = np.loadtxt(fn[1]).astype(np.float32)
+            data = np.loadtxt(file_path[1]).astype(np.float32)
             if not self.normal_channel:
                 point_set = data[:, 0:3]
             else:
@@ -105,10 +106,14 @@ class PartNormalDataset(Dataset):
                 self.cache[index] = (point_set, cls, seg)
         point_set[:, 0:3] = pc_normalize(point_set[:, 0:3])
 
-        choice = np.random.choice(len(seg), self.npoints, replace=True)
-        # resample
-        point_set = point_set[choice, :]
-        seg = seg[choice]
+        # choice = np.random.choice(len(seg), self.npoints, replace=True)
+        # # resample
+        # point_set = point_set[choice, :]
+        # seg = seg[choice]
+
+        if point_set.shape[0] > self.npoints:
+            point_set = point_set[0:self.npoints]
+            seg = seg[0:self.npoints]
 
         return point_set, cls, seg
 
