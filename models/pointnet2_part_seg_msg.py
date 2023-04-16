@@ -57,6 +57,6 @@ class get_loss(nn.Module):
         super(get_loss, self).__init__()
 
     def forward(self, pred, target, trans_feat):
-        total_loss = F.nll_loss(pred, target)
+        total_loss = F.nll_loss(pred, target, reduction='sum', weight=torch.tensor([0.1, 0.9]).cuda())
 
         return total_loss

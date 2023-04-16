@@ -127,10 +127,11 @@ def main(args):
             torch.nn.init.constant_(m.bias.data, 0.0)
 
     try:
-        checkpoint = torch.load(str(experiment_dir) + '/checkpoints/best_model.pth')
+        checkpoint_path = str(experiment_dir) + '/checkpoints/best_model.pth'
+        checkpoint = torch.load(checkpoint_path)
         start_epoch = checkpoint['epoch']
         classifier.load_state_dict(checkpoint['model_state_dict'])
-        log_string('Use pretrain model')
+        log_string(f'Use pretrain model: {checkpoint_path}')
     except:
         log_string('No existing model, starting training from scratch...')
         start_epoch = 0
@@ -161,9 +162,9 @@ def main(args):
 
     for epoch in range(start_epoch, args.epoch):
         '''Train on chopped scenes'''
-        log_string('**** Epoch %d (%d/%s) ****' % (global_epoch + 1, epoch + 1, args.epoch))
+        log_string(f'**** Epoch {global_epoch + 1} ({epoch + 1}/{args.epoch}) ****')
         lr = max(args.learning_rate * (args.lr_decay ** (epoch // args.step_size)), LEARNING_RATE_CLIP)
-        log_string('Learning rate:%f' % lr)
+        log_string(f'Learning rate:{lr}')
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
         momentum = MOMENTUM_ORIGINAL * (MOMENTUM_DECCAY ** (epoch // MOMENTUM_DECCAY_STEP))
@@ -256,11 +257,10 @@ def main(args):
 
             labelweights = labelweights.astype(np.float32) / np.sum(labelweights.astype(np.float32))
             mIoU = np.mean(np.array(total_correct_class) / (np.array(total_iou_deno_class, dtype=np.float) + 1e-6))
-            log_string('eval mean loss: %f' % (loss_sum / float(num_batches)))
-            log_string('eval point avg class IoU: %f' % (mIoU))
-            log_string('eval point accuracy: %f' % (total_correct / float(total_seen)))
-            log_string('eval point avg class acc: %f' % (
-                np.mean(np.array(total_correct_class) / (np.array(total_seen_class, dtype=np.float) + 1e-6))))
+            log_string(f'eval mean loss: {loss_sum / float(num_batches)}')
+            log_string(f'eval point avg class IoU: {mIoU}')
+            log_string(f'eval point accuracy: {total_correct / float(total_seen)}')
+            log_string(f'eval point avg class acc: {np.mean(np.array(total_correct_class)/(np.array(total_seen_class, dtype=np.float) + 1e-6))}')
 
             iou_per_class_str = '------- IoU --------\n'
             for l in range(NUM_CLASSES):
