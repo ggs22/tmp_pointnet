@@ -1,11 +1,9 @@
-# *_*coding:utf-8 *_*
 import os
 import json
-import warnings
 import numpy as np
+
 from torch.utils.data import Dataset
 from pathlib import Path
-# warnings.filterwarnings('ignore')
 
 
 def pc_normalize(pc):
@@ -16,7 +14,7 @@ def pc_normalize(pc):
     return pc
 
 
-class PartNormalDataset(Dataset):
+class KeypointsDataset(Dataset):
     def __init__(self, root, npoints=2500, split='train', class_choice=None, normal_channel=False):
         self.npoints = npoints
         self.root = root
@@ -79,6 +77,7 @@ class PartNormalDataset(Dataset):
         self.cache_size = 20000
 
     def __getitem__(self, index):
+        # Caching strategy for data points
         if index in self.cache:
             point_set, cls, seg = self.cache[index]
         else:

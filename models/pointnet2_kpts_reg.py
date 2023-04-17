@@ -44,7 +44,7 @@ class GetModel(nn.Module):
         batch_size, input_channels, num_points = xyz.shape  # Batch, Channels, Num points?
         if self.normal_channel:
             l0_points = xyz
-            l0_xyz = xyz[:,:3,:]
+            l0_xyz = xyz[:, :3, :]
         else:
             l0_points = xyz
             l0_xyz = xyz

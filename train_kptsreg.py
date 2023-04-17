@@ -1,6 +1,7 @@
 """
 Author: Benny
 Date: Nov 2019
+Adapted for TMS Systems on april 2023
 """
 import argparse
 import os
@@ -15,7 +16,7 @@ import numpy as np
 
 from pathlib import Path
 from tqdm import tqdm
-from data_utils.ShapeNetDataLoader import PartNormalDataset
+from data_utils.KeypointsNetDataLoader import KeypointsDataset
 import metrics.metrics as m
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -81,18 +82,18 @@ def main(args):
 
     '''CREATE DIR'''
     timestr = str(datetime.datetime.now().strftime('%Y-%m-%d_%H-%M'))
-    exp_dir = Path('./log/')
-    exp_dir.mkdir(exist_ok=True)
-    exp_dir = exp_dir.joinpath('part_seg')
-    exp_dir.mkdir(exist_ok=True)
+    experiment_output_dir = Path('./log/')
+    experiment_output_dir.mkdir(exist_ok=True)
+    experiment_output_dir = experiment_output_dir.joinpath('part_seg')
+    experiment_output_dir.mkdir(exist_ok=True)
     if args.log_dir is None:
-        exp_dir = exp_dir.joinpath(timestr)
+        experiment_output_dir = experiment_output_dir.joinpath(timestr)
     else:
-        exp_dir = exp_dir.joinpath(args.log_dir)
-    exp_dir.mkdir(exist_ok=True)
-    checkpoints_dir = exp_dir.joinpath('checkpoints/')
+        experiment_output_dir = experiment_output_dir.joinpath(args.log_dir)
+    experiment_output_dir.mkdir(exist_ok=True)
+    checkpoints_dir = experiment_output_dir.joinpath('checkpoints/')
     checkpoints_dir.mkdir(exist_ok=True)
-    log_dir = exp_dir.joinpath('logs/')
+    log_dir = experiment_output_dir.joinpath('logs/')
     log_dir.mkdir(exist_ok=True)
 
     '''LOG'''
@@ -100,7 +101,7 @@ def main(args):
     logger = logging.getLogger("Model")
     logger.setLevel(logging.INFO)
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    file_handler = logging.FileHandler('%s/%s.txt' % (log_dir, args.model))
+    file_handler = logging.FileHandler(f"{log_dir}/{args.model}.txt")
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
@@ -109,21 +110,21 @@ def main(args):
 
     '''DATA'''
     root = args.data_root
-
-    TRAIN_DATASET = PartNormalDataset(root=root, npoints=args.npoint, split='trainval', normal_channel=args.normal)
-    trainDataLoader = torch.utils.data.DataLoader(TRAIN_DATASET, batch_size=args.batch_size, shuffle=True, drop_last=True)
-    TEST_DATASET = PartNormalDataset(root=root, npoints=args.npoint, split='test', normal_channel=args.normal)
-    testDataLoader = torch.utils.data.DataLoader(TEST_DATASET, batch_size=args.batch_size, shuffle=False)
-    log_string("The number of training data is: %d" % len(TRAIN_DATASET))
-    log_string("The number of test data is: %d" % len(TEST_DATASET))
+    train_dataset = KeypointsDataset(root=root, npoints=args.npoint, split='trainval', normal_channel=args.normal)
+    train_data_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True,
+                                                    drop_last=False)
+    test_dataset = KeypointsDataset(root=root, npoints=args.npoint, split='test', normal_channel=args.normal)
+    test_data_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
+    log_string(f"The number of training data is: {len(train_dataset)}")
+    log_string(f"The number of test data is: {len(test_dataset)}")
 
     num_classes = args.num_classes
     num_part = args.num_parts
 
     '''MODEL LOADING'''
     MODEL = importlib.import_module(args.model)
-    shutil.copy(f'models/{args.model}.py', str(exp_dir))
-    shutil.copy('models/pointnet2_utils.py', str(exp_dir))
+    shutil.copy(f'models/{args.model}.py', str(experiment_output_dir))
+    shutil.copy('models/pointnet2_utils.py', str(experiment_output_dir))
 
     classifier = MODEL.GetModel(num_part, normal_channel=args.normal, channels_offset=args.channel_offset).cuda()
     criterion = MODEL.get_loss().cuda()
@@ -139,7 +140,7 @@ def main(args):
             torch.nn.init.constant_(m.bias.data, 0.0)
 
     try:
-        checkpoint_path = str(exp_dir) + '/checkpoints/best_model.pth'
+        checkpoint_path = str(experiment_output_dir) + '/checkpoints/best_model.pth'
         checkpoint = torch.load(checkpoint_path)
         start_epoch = checkpoint['epoch']
         classifier.load_state_dict(checkpoint['model_state_dict'])
@@ -196,12 +197,12 @@ def main(args):
         classifier = classifier.train()
 
         '''learning one epoch'''
-        for i, (points, label, target) in tqdm(enumerate(trainDataLoader), total=len(trainDataLoader), smoothing=0.9):
+        for i, (points, label, target) in tqdm(enumerate(train_data_loader), total=len(train_data_loader), smoothing=0.9):
             optimizer.zero_grad()
 
             points = points.data.numpy()
-            # points[:, :, 0:3] = provider.random_scale_point_cloud(points[:, :, 0:3])
-            # points[:, :, 0:3] = provider.shift_point_cloud(points[:, :, 0:3])
+            points[:, :, 0:3] = provider.random_scale_point_cloud(points[:, :, 0:3])
+            points[:, :, 0:3] = provider.shift_point_cloud(points[:, :, 0:3])
             points = torch.Tensor(points)
             points, label, target = points.float().cuda(), label.long().cuda(), target.long().cuda()
             points = points.transpose(2, 1)
@@ -226,7 +227,7 @@ def main(args):
             if i % 5 == 0:
                 tx = points.transpose(1, 2).cpu().numpy().squeeze()
                 ty = pred_choice.cpu().numpy().reshape((*pred_choice.shape, 1))
-                np.savetxt(fname=f'{exp_dir}{os.path.sep}train_sample_{i}.txt',
+                np.savetxt(fname=f'{experiment_output_dir}{os.path.sep}train_sample_{i}.txt',
                            X=np.concatenate([tx, ty], axis=1))
 
         train_mean_acc = np.mean(batchwise_accuracies)
@@ -255,7 +256,7 @@ def main(args):
 
             classifier = classifier.eval()
 
-            for batch_id, (points, label, target) in tqdm(enumerate(testDataLoader), total=len(testDataLoader), smoothing=0.9):
+            for batch_id, (points, label, target) in tqdm(enumerate(test_data_loader), total=len(test_data_loader), smoothing=0.9):
                 cur_batch_size, NUM_POINT, _ = points.size()
                 points, label, target = points.float().cuda(), label.long().cuda(), target.long().cuda()
                 points = points.transpose(2, 1)
@@ -274,7 +275,7 @@ def main(args):
                     if batch_id % 2 == 0:
                         tx = points.transpose(1, 2).cpu().numpy().squeeze()
                         ty = cur_pred_val.reshape((cur_pred_val.shape[1], 1))
-                        np.savetxt(fname=f'{exp_dir}{os.path.sep}test_sample_{batch_id}.txt',
+                        np.savetxt(fname=f'{experiment_output_dir}{os.path.sep}test_sample_{batch_id}.txt',
                                    X=np.concatenate([tx, ty], axis=1))
 
                 accuracy = np.sum(cur_pred_val == target)
