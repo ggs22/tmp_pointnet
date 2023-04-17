@@ -19,7 +19,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
 
     parser.add_argument("-s", "--source_dir",
-                        help="The source directory where *.json and correspond *.zdf file are located.",
+                        help="The source directory where *.json and corresponding *.png & *.zdf file are located.",
                         required=True,
                         type=str)
 
@@ -67,19 +67,27 @@ def main(args: argparse.Namespace) -> None:
                     x, y = int(np.round(point[0])/2), int(np.round(point[1])/2)
                     rgb[y, x, :] = [255, 255, 0]  # colorize keypoint yellow
 
-            # save annotation to ply file with a copy of the json file
+            # save annotation to ply file
             output_ply_path = output_dir.joinpath(json_file.stem + '.ply')
             pcd = o3d.geometry.PointCloud()
-            nan_ix = np.isnan(points)
-            points[nan_ix] = 0
-            rgb[nan_ix] = 0
+
             points = points.reshape((points.shape[0] * points.shape[1], points.shape[2]))
             colors = rgb.reshape((rgb.shape[0] * rgb.shape[1], rgb.shape[2]))
             colors = colors/255
 
+            assert all(np.isnan(points[:, 0]) == np.isnan(points[:, 1]))
+            assert all(np.isnan(points[:, 1]) == np.isnan(points[:, 2]))
+            nan_ix = np.isnan(points[:, 0])  # Trim off dataless points
+
+            points = points[~nan_ix, :]
+            colors = colors[~nan_ix, :]
+
             pcd.points = o3d.utility.Vector3dVector(points)
             pcd.colors = o3d.utility.Vector3dVector(colors)
+            print(f"Saving {str(output_ply_path)} with {np.asarray(pcd.points).shape[0]} points")
             o3d.io.write_point_cloud(filename=str(output_ply_path), pointcloud=pcd)
+
+            # Save a copy of the *.json annotation file with the resulting *.ply file
             shutil.copy(src=json_file, dst=output_dir.joinpath(json_file.name))
 
 

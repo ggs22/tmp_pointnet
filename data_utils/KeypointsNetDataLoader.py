@@ -1,6 +1,7 @@
 import os
 import json
 import numpy as np
+import open3d as o3d
 
 from torch.utils.data import Dataset
 from pathlib import Path
@@ -59,7 +60,7 @@ class KeypointsDataset(Dataset):
                 exit(-1)
 
             for filename in filenames:
-                path = str(Path(dir_point).joinpath(Path(filename).stem + ".txt"))
+                path = str(Path(dir_point).joinpath(Path(filename).stem + ".ply"))
                 self.meta[category].append(path)
 
         self.datapath = list()
@@ -85,6 +86,7 @@ class KeypointsDataset(Dataset):
             cat = self.datapath[index][0]
             cls = self.classes[cat]
             cls = np.array([cls]).astype(np.int32)
+            pcd = o3d.io.read_point_cloud(filename=file_path[1])
             data = np.loadtxt(file_path[1]).astype(np.float32)
             if not self.normal_channel:
                 point_set = data[:, 0:3]
