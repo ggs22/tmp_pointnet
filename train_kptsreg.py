@@ -179,7 +179,7 @@ def main(args):
 
     for epoch in range(start_epoch, args.epoch):
         batchwise_accuracies = list()
-        batchwise_recalls = list()
+        # batchwise_recalls = list()
         batchwise_losses = list()
 
         log_string(f'Epoch {global_epoch + 1} ({epoch + 1}/{args.epoch}):')
@@ -204,21 +204,17 @@ def main(args):
             points[:, :, 0:3] = provider.random_scale_point_cloud(points[:, :, 0:3])
             points[:, :, 0:3] = provider.shift_point_cloud(points[:, :, 0:3])
             points = torch.Tensor(points)
-            points, label, target = points.float().cuda(), label.long().cuda(), target.long().cuda()
+            points, label, target = points.float().cuda(), label.long().cuda(), target.float().cuda()
             points = points.transpose(2, 1)
 
-            seg_pred, trans_feat = classifier(points, to_categorical(label, num_classes))
-            seg_pred = seg_pred.contiguous().view(-1, num_part)
-            target = target.view(-1, 1)[:, 0]
-            pred_choice = seg_pred.data.max(1)[1]
+            kpts_pred = classifier(points, to_categorical(label, num_classes))
 
-            acc = m.accuracy(pred_choice, target)
-            rc = m.recall(pred_choice, target)
+            acc = m.euclidian_dist(kpts_pred, target)
 
             batchwise_accuracies.append(acc)
-            batchwise_recalls.append(rc)
+            # batchwise_recalls.append(rc)
 
-            loss = criterion(seg_pred, target, trans_feat)
+            loss = criterion(kpts_pred, target)
             batchwise_losses.append(loss.item())
             loss.backward()
             optimizer.step()
@@ -231,14 +227,14 @@ def main(args):
                            X=np.concatenate([tx, ty], axis=1))
 
         train_mean_acc = np.mean(batchwise_accuracies)
-        train_mean_recall = np.mean(batchwise_recalls)
+        #train_mean_recall = np.mean(batchwise_recalls)
         train_mean_loss = np.mean(batchwise_losses)
         log_string(f'\nMean train accuracy: {train_mean_acc:.5f}\n'
-                   f'mean train recall: {train_mean_recall:.5f}\n'
+                   # f'mean train recall: {train_mean_recall:.5f}\n'
                    f'mean train loss: {train_mean_loss:.5f}')
 
         batchwise_accuracies.clear()
-        batchwise_recalls.clear()
+        # batchwise_recalls.clear()
         batchwise_losses.clear()
 
         with torch.no_grad():
@@ -260,8 +256,8 @@ def main(args):
                 cur_batch_size, NUM_POINT, _ = points.size()
                 points, label, target = points.float().cuda(), label.long().cuda(), target.long().cuda()
                 points = points.transpose(2, 1)
-                seg_pred, trans_feat = classifier(points, to_categorical(label, num_classes))
-                cur_pred_val = seg_pred.cpu().data.numpy()
+                kpts_pred = classifier(points, to_categorical(label, num_classes))
+                cur_pred_val = kpts_pred.cpu().data.numpy()
                 cur_pred_val_logits = cur_pred_val
                 cur_pred_val = np.zeros((cur_batch_size, NUM_POINT)).astype(np.int32)
                 target = target.cpu().data.numpy()
@@ -282,9 +278,9 @@ def main(args):
                 total_correct += accuracy
                 total_seen += (cur_batch_size * NUM_POINT)
 
-                loss = criterion(seg_pred.squeeze().cuda(), torch.tensor(target.squeeze()).cuda(), trans_feat)
+                loss = criterion(kpts_pred.squeeze().cuda(), torch.tensor(target.squeeze()).cuda())
                 batchwise_accuracies.append(m.accuracy(torch.tensor(cur_pred_val), torch.tensor(target)))
-                batchwise_recalls.append(m.recall(torch.tensor(cur_pred_val), torch.tensor(target)))
+                # batchwise_recalls.append(m.recall(torch.tensor(cur_pred_val), torch.tensor(target)))
                 batchwise_losses.append(loss.item())
 
                 for label in range(num_part):
@@ -292,17 +288,17 @@ def main(args):
                     total_correct_class[label] += (np.sum((cur_pred_val == label) & (target == label)))
 
                 for i in range(cur_batch_size):
-                    seg_pred = cur_pred_val[i, :]
+                    kpts_pred = cur_pred_val[i, :]
                     seg_lbl = target[i, :]
                     cat = seg_label_to_cat[seg_lbl[0]]
                     part_ious = [0.0 for _ in range(len(seg_classes[cat]))]
                     for label in seg_classes[cat]:
                         if (np.sum(seg_lbl == label) == 0) and (
-                                np.sum(seg_pred == label) == 0):  # part is not present, no prediction as well
+                                np.sum(kpts_pred == label) == 0):  # part is not present, no prediction as well
                             part_ious[label - seg_classes[cat][0]] = 1.0
                         else:
-                            part_ious[label - seg_classes[cat][0]] = np.sum((seg_lbl == label) & (seg_pred == label)) / float(
-                                np.sum((seg_lbl == label) | (seg_pred == label)))
+                            part_ious[label - seg_classes[cat][0]] = np.sum((seg_lbl == label) & (kpts_pred == label)) / float(
+                                np.sum((seg_lbl == label) | (kpts_pred == label)))
                             # tst = m.get_iou(pred=seg_pred, target=seg_lbl, label=label)
                     shape_ious[cat].append(np.mean(part_ious[1:]))  # we just want the IoU of the non-background classes
 
@@ -313,7 +309,7 @@ def main(args):
                 shape_ious[cat] = np.mean(shape_ious[cat])
             mean_shape_ious = np.mean(list(shape_ious.values()))
             test_metrics['accuracy'] = total_correct / float(total_seen)
-            test_metrics['recall'] = np.mean(batchwise_recalls)
+            # test_metrics['recall'] = np.mean(batchwise_recalls)
             test_metrics['loss'] = np.mean(batchwise_losses)
             test_metrics['class_avg_accuracy'] = np.mean(
                 np.array(total_correct_class) / np.array(total_seen_class, dtype=float))
@@ -336,7 +332,7 @@ def main(args):
             state = {
                 'epoch': epoch,
                 'train_acc': train_mean_acc,
-                'train_recall': train_mean_recall,
+                # 'train_recall': train_mean_recall,
                 'train_loss': train_mean_loss,
                 'test_acc': test_metrics['accuracy'],
                 'test_recall': test_metrics['recall'],
@@ -353,9 +349,9 @@ def main(args):
         if test_metrics['accuracy'] > best_acc:
             best_acc = test_metrics['accuracy']
             log_string(f'New best accuracy is: {best_acc:.5f}')
-        if test_metrics['recall'] > best_recall:
-            best_recall = test_metrics['recall']
-            log_string(f'New best recall is: {best_recall:.5f}')
+        # if test_metrics['recall'] > best_recall:
+        #     best_recall = test_metrics['recall']
+        #     log_string(f'New best recall is: {best_recall:.5f}')
         if test_metrics['loss'] < best_loss:
             best_loss = test_metrics['loss']
             log_string(f'New best loss is: {loss:.5f}')

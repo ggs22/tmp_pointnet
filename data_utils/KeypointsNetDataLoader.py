@@ -59,14 +59,16 @@ class KeypointsDataset(Dataset):
                 print(f'Unknown split: {split}. Exiting..')
                 exit(-1)
 
-            for filename in filenames:
-                path = str(Path(dir_point).joinpath(Path(filename).stem + ".ply"))
-                self.meta[category].append(path)
+            for file in filenames:
+                ply_path = str(Path(dir_point).joinpath(Path(file).stem + ".ply"))
+                json_path = str(Path(dir_point).joinpath(Path(file).stem + ".json"))
+                self.meta[category].append((ply_path, json_path))
 
+        # Poplulate a list of file paths for this split
         self.datapath = list()
         for category in self.categories:
-            for filename in self.meta[category]:
-                self.datapath.append((category, filename))
+            for files_pair in self.meta[category]:
+                self.datapath.append((category, files_pair))
 
         self.classes = dict()
         for category in self.categories.keys():
@@ -80,33 +82,40 @@ class KeypointsDataset(Dataset):
     def __getitem__(self, index):
         # Caching strategy for data points
         if index in self.cache:
-            point_set, cls, seg = self.cache[index]
+            point_set, cls, keypoints = self.cache[index]
         else:
-            file_path = self.datapath[index]
+            print("Caching data, first this iteration will be longer...")
+            ply_file_path = self.datapath[index][1][0]
+            json_file_path = self.datapath[index][1][1]
             cat = self.datapath[index][0]
             cls = self.classes[cat]
             cls = np.array([cls]).astype(np.int32)
-            pcd = o3d.io.read_point_cloud(filename=file_path[1])
-            data = np.loadtxt(file_path[1]).astype(np.float32)
-            if not self.normal_channel:
-                point_set = data[:, 0:3]
-            else:
-                point_set = data[:, 0:6]
-            seg = data[:, -1].astype(np.int32)
+            pcd = o3d.io.read_point_cloud(filename=ply_file_path)
+            zyx = np.asarray(pcd.points)
+            rgb = np.zeros(zyx.shape)  # let's keep only geometric information
+            data = np.concatenate([zyx, rgb], axis=1)
+            point_set = data
+            with open(file=json_file_path, mode='r') as f:
+                labelme_annotation = json.load(fp=f)
+                keypoints = np.zeros(shape=(6, 5, 2))  # we know we have 5 kpts
+                for ix, shape in enumerate(labelme_annotation['shapes']):
+                    keypoints[ix] = np.array(shape['points'])
+
             if len(self.cache) < self.cache_size:
-                self.cache[index] = (point_set, cls, seg)
+                self.cache[index] = (point_set, cls, keypoints)
+
+        # Normalize the xyz data
         point_set[:, 0:3] = pc_normalize(point_set[:, 0:3])
 
-        # choice = np.random.choice(len(seg), self.npoints, replace=True)
-        # # resample
-        # point_set = point_set[choice, :]
-        # seg = seg[choice]
+        # Random resample
+        choice = np.random.choice(point_set.shape[0], self.npoints, replace=True)
+        point_set = point_set[choice, :]
 
+        # Cap the number of points
         if point_set.shape[0] > self.npoints:
             point_set = point_set[0:self.npoints]
-            seg = seg[0:self.npoints]
 
-        return point_set, cls, seg
+        return point_set, cls, keypoints
 
     def __len__(self):
         return len(self.datapath)

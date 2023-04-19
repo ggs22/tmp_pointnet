@@ -21,6 +21,10 @@ def recall(pred: torch.Tensor, target: torch.Tensor):
     return tp / (tp + fn)
 
 
+def euclidian_dist(pred: torch.Tensor, target: torch.Tensor):
+    return torch.cdist(x1=pred, x2=target, p=2)
+
+
 def get_iou(pred: np.ndarray, target: np.ndarray, label: int):
     intersect = np.intersect1d(np.where(pred == label)[0],
                                np.where(target == label)[0]).shape[0]

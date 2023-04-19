@@ -60,7 +60,7 @@ def index_points(points, idx):
     return new_points
 
 
-def farthest_point_sample(xyz, npoint):
+def farthest_point_sample(xyz: torch.Tensor, npoint: int):
     """
     Input:
         xyz: pointcloud data, [B, N, 3]
@@ -76,7 +76,7 @@ def farthest_point_sample(xyz, npoint):
     batch_indices = torch.arange(B, dtype=torch.long).to(device)
     for i in range(npoint):
         centroids[:, i] = farthest
-        centroid = xyz[batch_indices, farthest, :].view(B, 1, 3)
+        centroid = xyz[batch_indices, farthest, :].view(B, 1, xyz.shape[2])
         dist = torch.sum((xyz - centroid) ** 2, -1)
         mask = dist < distance
         distance[mask] = dist[mask]
@@ -84,7 +84,7 @@ def farthest_point_sample(xyz, npoint):
     return centroids
 
 
-def query_ball_point(radius, nsample, xyz, new_xyz):
+def query_ball_point(radius: float, nsample: int, xyz: torch.Tensor, new_xyz: torch.Tensor):
     """
     Input:
         radius: local region radius
@@ -253,7 +253,7 @@ class PointNetSetAbstractionMsg(nn.Module):
             for j in range(len(self.conv_blocks[i])):
                 conv = self.conv_blocks[i][j]
                 bn = self.bn_blocks[i][j]
-                grouped_points =  F.relu(bn(conv(grouped_points)))
+                grouped_points = F.relu(bn(conv(grouped_points)))
             new_points = torch.max(grouped_points, 2)[0]  # [B, D', S]
             new_points_list.append(new_points)
 
@@ -313,4 +313,3 @@ class PointNetFeaturePropagation(nn.Module):
             bn = self.mlp_bns[i]
             new_points = F.relu(bn(conv(new_points)))
         return new_points
-
