@@ -257,7 +257,9 @@ def main(args):
                 for weld_path_ix in range(ty.shape[0]):
                     weld_path_dict[f'weld_path{weld_path_ix}'] = list()
                     for keypoint_ix in range(ty.shape[1]):
-                        weld_path_dict[f'weld_path{weld_path_ix}'].append(str(ty[weld_path_ix, keypoint_ix, :]))
+                        x = float(ty[weld_path_ix, keypoint_ix, :][0])
+                        y = float(ty[weld_path_ix, keypoint_ix, :][1])
+                        weld_path_dict[f'weld_path{weld_path_ix}'].append([x, y])
                 with open(file=f'{experiment_output_dir}{os.path.sep}{sample_id[0]}_weld_paths.json', mode='w') as f:
                     json.dump(obj=weld_path_dict, fp=f)
 

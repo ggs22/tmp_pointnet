@@ -37,12 +37,6 @@ def create_ply_from_text_annotation(file_path: Path, json_file_path: Path) -> No
     with open(file=str(json_file_path), mode='r') as f:
         keypoints_dict = json.load(fp=f)
 
-    # TODO complet ply prediction generation
-    for keypoint_ix, points in keypoints_dict.items():
-        for point in points:
-            x = float(point[1:-1:].split()[0])
-            y = float(point[1:-1:].split()[1])
-
     # create and populate pointcloud object
     t_ix = np.where(arr[:, -1:] == 1)[0]
     colors[t_ix] = [1, 0, 0]
