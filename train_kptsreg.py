@@ -262,9 +262,9 @@ def main(args):
                    f"test Distance: {test_metrics['distance']}, "
                    f"test Loss: {test_metrics['loss']}, ")
 
-        if test_metrics['loss'] < best_loss:
+        def save_model(tag: str = ''):
             logger.info(f"Save model with new best loss {test_metrics['loss']}...")
-            savepath = str(checkpoints_dir) + '/best_model.pth'
+            savepath = str(checkpoints_dir) + f'/pointnet_model{tag}.pth'
             log_string(f'Saving at {savepath}')
             state = {
                 'epoch': epoch,
@@ -277,9 +277,12 @@ def main(args):
             }
             torch.save(state, savepath)
             log_string('Saving model....')
+        save_model(tag=f"_epoch_{epoch}")
 
+        if test_metrics['loss'] < best_loss:
             best_loss = test_metrics['loss']
-            log_string(f'New best loss is: {loss:.5f}')
+            log_string(f'New best loss is: {best_loss:.5f}')
+            save_model(tag=f"_best_valid_epoch_{epoch}")
 
         ''' Update best metrics in display '''
         if test_metrics['distance'] < best_distance:
