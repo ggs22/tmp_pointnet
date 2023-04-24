@@ -14,11 +14,13 @@ import shutil
 import provider
 import numpy as np
 import json
+import metrics.metrics as m
+import re
 
 from pathlib import Path
 from tqdm import tqdm
 from data_utils.KeypointsNetDataLoader import KeypointsDataset
-import metrics.metrics as m
+
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = BASE_DIR
@@ -49,6 +51,24 @@ def to_categorical(y, num_classes):
     return new_y
 
 
+def get_current_model_path(experiment_output_dir: str, mode: str = 'current') -> str:
+    checkpoint_path = Path(experiment_output_dir).joinpath('checkpoints')
+    if mode == 'current':
+        pattern = r'pointnet_model_epoch_([0-9]+).pth'
+    elif mode == 'best':
+        pattern = r'pointnet_model_best_valid_epoch_([0-9]+).pth'
+    latest_ix = -1
+    res = "NONEXISTANT"
+    for file_path in checkpoint_path.glob(pattern='*.pth'):
+        match = re.match(pattern=pattern, string=str(file_path.name))
+        if match is not None:
+            ix = int(match[1])
+            if ix > latest_ix:
+                latest_ix = ix
+                res = str(file_path)
+    return res
+
+
 def parse_args():
     parser = argparse.ArgumentParser('Model')
     parser.add_argument('--model', type=str, default='pointnet_part_seg', help='model name')
@@ -74,9 +94,6 @@ def parse_args():
 
 
 def main(args):
-    def log_string(str):
-        logger.info(str)
-        print(str)
 
     '''HYPER PARAMETER'''
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
@@ -106,8 +123,15 @@ def main(args):
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
+
+    def log_string(str):
+        logger.info(str)
+        print(str)
+
     log_string('PARAMETER ...')
     log_string(args)
+
+    log_string(f"Using CUDA: {torch.cuda.is_available()}")
 
     '''DATA'''
     root = args.data_root
@@ -143,27 +167,34 @@ def main(args):
             torch.nn.init.xavier_normal_(m.weight.data)
             torch.nn.init.constant_(m.bias.data, 0.0)
 
-    try:
-        checkpoint_path = str(experiment_output_dir) + '/checkpoints/best_model.pth'
+    ''' LOAD MODEL '''
+    # checkpoint_path = str(experiment_output_dir) + f'/checkpoints/best_model.pth'
+    checkpoint_path = get_current_model_path(str(experiment_output_dir))
+    if Path(checkpoint_path).exists():
         checkpoint = torch.load(checkpoint_path)
         start_epoch = checkpoint['epoch']
         classifier.load_state_dict(checkpoint['model_state_dict'])
         log_string(f'Use pretrain model from: {checkpoint_path}')
-    except:
+        if args.optimizer == 'Adam':
+            optimizer = torch.optim.Adam(classifier.parameters())
+        else:
+            optimizer = torch.optim.SGD(classifier.parameters())
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    else:
         log_string('No existing model, starting training from scratch...')
         start_epoch = 0
         classifier = classifier.apply(weights_init)
 
-    if args.optimizer == 'Adam':
-        optimizer = torch.optim.Adam(
-            classifier.parameters(),
-            lr=args.learning_rate,
-            betas=(0.9, 0.999),
-            eps=1e-08,
-            weight_decay=args.decay_rate
-        )
-    else:
-        optimizer = torch.optim.SGD(classifier.parameters(), lr=args.learning_rate, momentum=0.9)
+        if args.optimizer == 'Adam':
+            optimizer = torch.optim.Adam(
+                classifier.parameters(),
+                lr=args.learning_rate,
+                betas=(0.9, 0.999),
+                eps=1e-08,
+                weight_decay=args.decay_rate
+            )
+        else:
+            optimizer = torch.optim.SGD(classifier.parameters(), lr=args.learning_rate, momentum=0.9)
 
     def bn_momentum_adjust(m, momentum):
         if isinstance(m, torch.nn.BatchNorm2d) or isinstance(m, torch.nn.BatchNorm1d):
@@ -197,7 +228,7 @@ def main(args):
         classifier = classifier.train()
 
         '''learning one epoch'''
-        for i, (points, label, target) in tqdm(enumerate(train_data_loader), total=len(train_data_loader), smoothing=0.9):
+        for i, (points, label, target, sample_id) in tqdm(enumerate(train_data_loader), total=len(train_data_loader), smoothing=0.9):
             optimizer.zero_grad()
 
             points = points.data.numpy()
@@ -221,19 +252,19 @@ def main(args):
             if i % 5 == 0:
                 tx = points.transpose(1, 2).cpu().numpy().squeeze()
                 ty = kpts_pred.cpu().data.numpy()
-                np.savetxt(fname=f'{experiment_output_dir}{os.path.sep}train_sample_{i}_xyz.txt', X=tx)
+                np.savetxt(fname=f'{experiment_output_dir}{os.path.sep}{sample_id[0]}_xyz.txt', X=tx)
                 weld_path_dict = dict()
                 for weld_path_ix in range(ty.shape[0]):
                     weld_path_dict[f'weld_path{weld_path_ix}'] = list()
                     for keypoint_ix in range(ty.shape[1]):
                         weld_path_dict[f'weld_path{weld_path_ix}'].append(str(ty[weld_path_ix, keypoint_ix, :]))
-                with open(file=f'{experiment_output_dir}{os.path.sep}train_sample_{i}_weld_paths.json', mode='w') as f:
+                with open(file=f'{experiment_output_dir}{os.path.sep}{sample_id[0]}_weld_paths.json', mode='w') as f:
                     json.dump(obj=weld_path_dict, fp=f)
 
         train_mean_dist = torch.concatenate(batchwise_distances).mean().item()
         train_mean_loss = np.mean(batchwise_losses)
         log_string(f'\nMean train distance: {train_mean_dist:.5f}\n'
-                   f'mean train loss: {train_mean_loss:.5f}')
+                   f'Mean train loss: {train_mean_loss:.5f}')
 
         batchwise_distances.clear()
         batchwise_losses.clear()
@@ -243,7 +274,7 @@ def main(args):
 
             classifier = classifier.eval()
 
-            for batch_id, (points, label, target) in tqdm(enumerate(test_data_loader), total=len(test_data_loader), smoothing=0.9):
+            for batch_id, (points, label, target, sample_id) in tqdm(enumerate(test_data_loader), total=len(test_data_loader), smoothing=0.9):
                 cur_batch_size, NUM_POINT, _ = points.size()
                 points, label, target = points.float().cuda(), label.long().cuda(), target.float().cuda()
                 points = points.transpose(2, 1)
@@ -262,7 +293,10 @@ def main(args):
                    f"test Distance: {test_metrics['distance']}, "
                    f"test Loss: {test_metrics['loss']}, ")
 
-        def save_model(tag: str = ''):
+        def save_model(tag: str = '', mode: str = 'current'):
+            current_model_path = get_current_model_path(str(experiment_output_dir), mode)
+            if Path(current_model_path).exists():
+                os.remove(path=current_model_path)
             logger.info(f"Save model with new best loss {test_metrics['loss']}...")
             savepath = str(checkpoints_dir) + f'/pointnet_model{tag}.pth'
             log_string(f'Saving at {savepath}')
@@ -276,7 +310,7 @@ def main(args):
                 'optimizer_state_dict': optimizer.state_dict(),
             }
             torch.save(state, savepath)
-            log_string('Saving model....')
+
         save_model(tag=f"_epoch_{epoch}")
 
         if test_metrics['loss'] < best_loss:

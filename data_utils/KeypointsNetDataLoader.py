@@ -82,7 +82,7 @@ class KeypointsDataset(Dataset):
     def __getitem__(self, index):
         # Caching strategy for data points
         if index in self.cache:
-            point_set, cls, keypoints = self.cache[index]
+            point_set, cls, keypoints, sample_id = self.cache[index]
         else:
             ply_file_path = self.datapath[index][1][0]
             json_file_path = self.datapath[index][1][1]
@@ -94,6 +94,7 @@ class KeypointsDataset(Dataset):
             rgb = np.zeros(zyx.shape)  # let's keep only geometric information
             data = np.concatenate([zyx, rgb], axis=1)
             point_set = data
+            sample_id = json_file_path.split(os.path.sep)[-1:][0][0:-5:]
             with open(file=json_file_path, mode='r') as f:
                 labelme_annotation = json.load(fp=f)
                 keypoints = np.zeros(shape=(8, 5, 2))
@@ -101,7 +102,7 @@ class KeypointsDataset(Dataset):
                     keypoints[ix] = np.array(shape['points'])
 
             if len(self.cache) < self.cache_size:
-                self.cache[index] = (point_set, cls, keypoints)
+                self.cache[index] = (point_set, cls, keypoints, sample_id)
 
         # Normalize the xyz data
         point_set[:, 0:3] = pc_normalize(point_set[:, 0:3])
@@ -114,7 +115,7 @@ class KeypointsDataset(Dataset):
         if point_set.shape[0] > self.npoints:
             point_set = point_set[0:self.npoints]
 
-        return point_set, cls, keypoints
+        return point_set, cls, keypoints, sample_id
 
     def __len__(self):
         return len(self.datapath)
