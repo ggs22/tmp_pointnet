@@ -84,7 +84,6 @@ class KeypointsDataset(Dataset):
         if index in self.cache:
             point_set, cls, keypoints = self.cache[index]
         else:
-            print("Caching data, first this iteration will be longer...")
             ply_file_path = self.datapath[index][1][0]
             json_file_path = self.datapath[index][1][1]
             cat = self.datapath[index][0]
@@ -97,7 +96,7 @@ class KeypointsDataset(Dataset):
             point_set = data
             with open(file=json_file_path, mode='r') as f:
                 labelme_annotation = json.load(fp=f)
-                keypoints = np.zeros(shape=(6, 5, 2))  # we know we have 5 kpts
+                keypoints = np.zeros(shape=(8, 5, 2))
                 for ix, shape in enumerate(labelme_annotation['shapes']):
                     keypoints[ix] = np.array(shape['points'])
 

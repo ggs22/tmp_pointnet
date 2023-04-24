@@ -1,11 +1,13 @@
-import torch.nn as nn
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
-from pointnet2_utils import PointNetSetAbstractionMsg, PointNetSetAbstraction, PointNetFeaturePropagation
+
+from pointnet2_utils import PointNetSetAbstractionMsg, PointNetSetAbstraction, \
+    PointNetFeaturePropagation, PointNetRegressionHead
 
 
 class GetModel(nn.Module):
-    def __init__(self, num_classes, normal_channel=False, channels_offset: int = None):
+    def __init__(self, num_classes, normal_channel=False, channels_offset: int = None, num_point: int = None):
         super(GetModel, self).__init__()
         if normal_channel:
             additional_channel = 3
@@ -39,10 +41,7 @@ class GetModel(nn.Module):
         self.bn1 = nn.BatchNorm1d(128)
         self.drop1 = nn.Dropout(0.5)
         self.conv2 = nn.Conv1d(128, num_classes, 1)
-
-        for ix_keypoint in range(0, 7):
-            self.__setattr__(f"fc_kpt{ix_keypoint+1}_x", nn.Linear(12800000, 5))
-            self.__setattr__(f"fc_kpt{ix_keypoint+1}_y", nn.Linear(12800000, 5))
+        self.regression_head = PointNetRegressionHead(in_channel=128 * num_point, keypoint_num=5)
 
     def forward(self, xyz, cls_label):
         # Set Abstraction layers
@@ -64,13 +63,11 @@ class GetModel(nn.Module):
                                               l1_xyz,
                                               torch.cat([cls_label_one_hot, l0_xyz, l0_points], 1),
                                               l1_points)
-        # FC layers
+        # Keypoints Regression FC layers
         feat = F.relu(self.bn1(self.conv1(l0_points)))
-        res = torch.zeros(size=(6, 5, 2)).cuda()
-        for ix_keypoint in range(0, res.shape[0]):
-            flat_feat = torch.flatten(feat)
-            res[ix_keypoint, :, 0] = self.fc_kpt1_x(flat_feat)
-            res[ix_keypoint, :, 1] = self.fc_kpt1_y(flat_feat)
+
+        flat_feat = torch.flatten(feat)
+        res = self.regression_head(flat_feat)
 
         # # part seg FC layers
         # feat = F.relu(self.bn1(self.conv1(l0_points)))
@@ -87,6 +84,6 @@ class get_loss(nn.Module):
         super(get_loss, self).__init__()
 
     def forward(self, pred, target):
-        total_loss = F.nll_loss(pred, target, reduction='sum', weight=torch.tensor([0.1, 0.9]).cuda())
+        total_loss = F.mse_loss(pred, target)
 
         return total_loss

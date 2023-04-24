@@ -22,6 +22,11 @@ def parse_args() -> argparse.Namespace:
                         help="The source directory where *.json and corresponding *.png & *.zdf file are located.",
                         required=True,
                         type=str)
+    parser.add_argument("--down_sampling_factor",
+                        help="Zivid downsampling 2by2 wil be applied down_smapling_factor of times. The keypoints "
+                             "coordinates will be devided by 2^down_sampling_factor",
+                        type=int,
+                        default=3)
 
     return parser.parse_args()
 
@@ -49,22 +54,22 @@ def main(args: argparse.Namespace) -> None:
                 raise IOError(f"The *.zdf file correspong to {str(json_file.name)} does not exists")
 
             # laod both files to workable objects
-            annotation = dict()
             with(open(file=str(json_file))) as f:
                 annotation = json.load(fp=f)
 
-            # points: np.ndarray = None
-            # rgb: np.ndarray = None
             with(open(file=str(zdf_file))) as f:
                 frame = zivid.Frame(str(zdf_file))
-                frame.point_cloud().downsample(zivid.PointCloud.Downsampling.by2x2)
+                # downsampling of the number of points
+                factor = args.down_sampling_factor
+                for _ in range(0, factor):
+                    frame.point_cloud().downsample(zivid.PointCloud.Downsampling.by2x2)
                 points = frame.point_cloud().copy_data("xyz")
                 rgb = frame.point_cloud().copy_data("rgba")[:, :, :3]
 
             # Loop through keypoints and extract their xy coordinates
             for shape in annotation['shapes']:
                 for point in shape['points']:
-                    x, y = int(np.round(point[0])/2), int(np.round(point[1])/2)
+                    x, y = int(np.round(point[0])/(2**factor)), int(np.round(point[1])/(2**factor))
                     rgb[y, x, :] = [255, 255, 0]  # colorize keypoint yellow
 
             # save annotation to ply file

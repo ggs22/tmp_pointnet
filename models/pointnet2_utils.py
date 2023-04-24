@@ -262,6 +262,24 @@ class PointNetSetAbstractionMsg(nn.Module):
         return new_xyz, new_points_concat
 
 
+class PointNetRegressionHead(nn.Module):
+    def __init__(self, in_channel: int, keypoint_num: int = 5, max_weld_num: int = 8):
+        super(PointNetRegressionHead, self).__init__()
+        self.linears_x = nn.ModuleList()
+        self.linears_y = nn.ModuleList()
+        self.max_weld_num = max_weld_num
+        for ix_keypoint in range(0, self.max_weld_num):
+            self.linears_x.append(nn.Linear(in_channel, keypoint_num))
+            self.linears_y.append(nn.Linear(in_channel, keypoint_num))
+
+    def forward(self, input):
+        res = torch.zeros(size=(8, 5, 2)).cuda()
+        for ix_keypoint, (linear_x, linear_y) in enumerate(zip(self.linears_x, self.linears_y)):
+            res[ix_keypoint, :, 0] = linear_x(input)
+            res[ix_keypoint, :, 1] = linear_y(input)
+        return res
+
+
 class PointNetFeaturePropagation(nn.Module):
     def __init__(self, in_channel, mlp):
         super(PointNetFeaturePropagation, self).__init__()

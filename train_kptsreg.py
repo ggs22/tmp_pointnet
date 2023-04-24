@@ -13,6 +13,7 @@ import importlib
 import shutil
 import provider
 import numpy as np
+import json
 
 from pathlib import Path
 from tqdm import tqdm
@@ -126,7 +127,10 @@ def main(args):
     shutil.copy(f'models/{args.model}.py', str(experiment_output_dir))
     shutil.copy('models/pointnet2_utils.py', str(experiment_output_dir))
 
-    classifier = MODEL.GetModel(num_part, normal_channel=args.normal, channels_offset=args.channel_offset).cuda()
+    classifier = MODEL.GetModel(num_part,
+                                normal_channel=args.normal,
+                                channels_offset=args.channel_offset,
+                                num_point=args.npoint).cuda()
     criterion = MODEL.get_loss().cuda()
     classifier.apply(inplace_relu)
 
@@ -170,16 +174,12 @@ def main(args):
     MOMENTUM_DECCAY = 0.5
     MOMENTUM_DECCAY_STEP = args.step_size
 
-    best_acc = 0
-    best_recall = 0
+    best_distance = np.inf
     best_loss = torch.inf
     global_epoch = 0
-    best_class_avg_iou = 0
-    best_instance_avg_iou = 0
 
     for epoch in range(start_epoch, args.epoch):
-        batchwise_accuracies = list()
-        # batchwise_recalls = list()
+        batchwise_distances = list()
         batchwise_losses = list()
 
         log_string(f'Epoch {global_epoch + 1} ({epoch + 1}/{args.epoch}):')
@@ -209,12 +209,10 @@ def main(args):
 
             kpts_pred = classifier(points, to_categorical(label, num_classes))
 
-            acc = m.euclidian_dist(kpts_pred, target)
+            dist = m.euclidian_dist(kpts_pred, torch.squeeze(target))
+            batchwise_distances.append(dist)
 
-            batchwise_accuracies.append(acc)
-            # batchwise_recalls.append(rc)
-
-            loss = criterion(kpts_pred, target)
+            loss = criterion(kpts_pred, torch.squeeze(target))
             batchwise_losses.append(loss.item())
             loss.backward()
             optimizer.step()
@@ -222,108 +220,47 @@ def main(args):
             ''' lets output some sample for visialization '''
             if i % 5 == 0:
                 tx = points.transpose(1, 2).cpu().numpy().squeeze()
-                ty = pred_choice.cpu().numpy().reshape((*pred_choice.shape, 1))
-                np.savetxt(fname=f'{experiment_output_dir}{os.path.sep}train_sample_{i}.txt',
-                           X=np.concatenate([tx, ty], axis=1))
+                ty = kpts_pred.cpu().data.numpy()
+                np.savetxt(fname=f'{experiment_output_dir}{os.path.sep}train_sample_{i}_xyz.txt', X=tx)
+                weld_path_dict = dict()
+                for weld_path_ix in range(ty.shape[0]):
+                    weld_path_dict[f'weld_path{weld_path_ix}'] = list()
+                    for keypoint_ix in range(ty.shape[1]):
+                        weld_path_dict[f'weld_path{weld_path_ix}'].append(str(ty[weld_path_ix, keypoint_ix, :]))
+                with open(file=f'{experiment_output_dir}{os.path.sep}train_sample_{i}_weld_paths.json', mode='w') as f:
+                    json.dump(obj=weld_path_dict, fp=f)
 
-        train_mean_acc = np.mean(batchwise_accuracies)
-        #train_mean_recall = np.mean(batchwise_recalls)
+        train_mean_dist = torch.concatenate(batchwise_distances).mean().item()
         train_mean_loss = np.mean(batchwise_losses)
-        log_string(f'\nMean train accuracy: {train_mean_acc:.5f}\n'
-                   # f'mean train recall: {train_mean_recall:.5f}\n'
+        log_string(f'\nMean train distance: {train_mean_dist:.5f}\n'
                    f'mean train loss: {train_mean_loss:.5f}')
 
-        batchwise_accuracies.clear()
-        # batchwise_recalls.clear()
+        batchwise_distances.clear()
         batchwise_losses.clear()
 
         with torch.no_grad():
             test_metrics = {}
-            total_correct = 0
-            total_seen = 0
-            total_seen_class = [0 for _ in range(num_part)]
-            total_correct_class = [0 for _ in range(num_part)]
-            shape_ious = {cat: [] for cat in seg_classes.keys()}
-            seg_label_to_cat = {}  # {0:Airplane, 1:Airplane, ...49:Table}
-
-            for cat in seg_classes.keys():
-                for label in seg_classes[cat]:
-                    seg_label_to_cat[label] = cat
 
             classifier = classifier.eval()
 
             for batch_id, (points, label, target) in tqdm(enumerate(test_data_loader), total=len(test_data_loader), smoothing=0.9):
                 cur_batch_size, NUM_POINT, _ = points.size()
-                points, label, target = points.float().cuda(), label.long().cuda(), target.long().cuda()
+                points, label, target = points.float().cuda(), label.long().cuda(), target.float().cuda()
                 points = points.transpose(2, 1)
                 kpts_pred = classifier(points, to_categorical(label, num_classes))
                 cur_pred_val = kpts_pred.cpu().data.numpy()
-                cur_pred_val_logits = cur_pred_val
-                cur_pred_val = np.zeros((cur_batch_size, NUM_POINT)).astype(np.int32)
                 target = target.cpu().data.numpy()
 
-                for i in range(cur_batch_size):
-                    cat = seg_label_to_cat[target[i, 0]]
-                    logits = cur_pred_val_logits[i, :, :]
-                    cur_pred_val[i, :] = np.argmax(logits[:, seg_classes[cat]], 1) + seg_classes[cat][0]
-
-                    ''' lets output some sample for visialization '''
-                    if batch_id % 2 == 0:
-                        tx = points.transpose(1, 2).cpu().numpy().squeeze()
-                        ty = cur_pred_val.reshape((cur_pred_val.shape[1], 1))
-                        np.savetxt(fname=f'{experiment_output_dir}{os.path.sep}test_sample_{batch_id}.txt',
-                                   X=np.concatenate([tx, ty], axis=1))
-
-                accuracy = np.sum(cur_pred_val == target)
-                total_correct += accuracy
-                total_seen += (cur_batch_size * NUM_POINT)
-
                 loss = criterion(kpts_pred.squeeze().cuda(), torch.tensor(target.squeeze()).cuda())
-                batchwise_accuracies.append(m.accuracy(torch.tensor(cur_pred_val), torch.tensor(target)))
-                # batchwise_recalls.append(m.recall(torch.tensor(cur_pred_val), torch.tensor(target)))
+                batchwise_distances.append(m.euclidian_dist(torch.tensor(cur_pred_val), torch.squeeze(torch.tensor(target))))
                 batchwise_losses.append(loss.item())
 
-                for label in range(num_part):
-                    total_seen_class[label] += np.sum(target == label)
-                    total_correct_class[label] += (np.sum((cur_pred_val == label) & (target == label)))
-
-                for i in range(cur_batch_size):
-                    kpts_pred = cur_pred_val[i, :]
-                    seg_lbl = target[i, :]
-                    cat = seg_label_to_cat[seg_lbl[0]]
-                    part_ious = [0.0 for _ in range(len(seg_classes[cat]))]
-                    for label in seg_classes[cat]:
-                        if (np.sum(seg_lbl == label) == 0) and (
-                                np.sum(kpts_pred == label) == 0):  # part is not present, no prediction as well
-                            part_ious[label - seg_classes[cat][0]] = 1.0
-                        else:
-                            part_ious[label - seg_classes[cat][0]] = np.sum((seg_lbl == label) & (kpts_pred == label)) / float(
-                                np.sum((seg_lbl == label) | (kpts_pred == label)))
-                            # tst = m.get_iou(pred=seg_pred, target=seg_lbl, label=label)
-                    shape_ious[cat].append(np.mean(part_ious[1:]))  # we just want the IoU of the non-background classes
-
-            all_shape_ious = []
-            for cat in shape_ious.keys():
-                for iou in shape_ious[cat]:
-                    all_shape_ious.append(iou)
-                shape_ious[cat] = np.mean(shape_ious[cat])
-            mean_shape_ious = np.mean(list(shape_ious.values()))
-            test_metrics['accuracy'] = total_correct / float(total_seen)
-            # test_metrics['recall'] = np.mean(batchwise_recalls)
+            test_metrics['distance'] = torch.concat(batchwise_distances).mean().item()
             test_metrics['loss'] = np.mean(batchwise_losses)
-            test_metrics['class_avg_accuracy'] = np.mean(
-                np.array(total_correct_class) / np.array(total_seen_class, dtype=float))
-            for cat in sorted(shape_ious.keys()):
-                log_string('eval mIoU of %s %f' % (cat + ' ' * (14 - len(cat)), shape_ious[cat]))
-            test_metrics['class_avg_iou'] = mean_shape_ious
-            test_metrics['instance_avg_iou'] = np.mean(all_shape_ious)
 
         log_string(f"Epoch: {epoch+1} "
-                   f"test Accuracy: {test_metrics['accuracy']}, "
-                   f"test Recall: {test_metrics['recall']}, "
-                   f"test Loss: {test_metrics['loss']}, "
-                   f"Class avg mIOU: {test_metrics['class_avg_iou']}, "
-                   f"Instance avg mIOU: {test_metrics['instance_avg_iou']}")
+                   f"test Distance: {test_metrics['distance']}, "
+                   f"test Loss: {test_metrics['loss']}, ")
 
         if test_metrics['loss'] < best_loss:
             logger.info(f"Save model with new best loss {test_metrics['loss']}...")
@@ -331,36 +268,24 @@ def main(args):
             log_string(f'Saving at {savepath}')
             state = {
                 'epoch': epoch,
-                'train_acc': train_mean_acc,
-                # 'train_recall': train_mean_recall,
+                'train_dist': train_mean_dist,
                 'train_loss': train_mean_loss,
-                'test_acc': test_metrics['accuracy'],
-                'test_recall': test_metrics['recall'],
+                'test_acc': test_metrics['distance'],
                 'test_loss': test_metrics['loss'],
-                'class_avg_iou': test_metrics['class_avg_iou'],
-                'instance_avg_iou': test_metrics['instance_avg_iou'],
                 'model_state_dict': classifier.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
             }
             torch.save(state, savepath)
             log_string('Saving model....')
 
-        ''' Update best metrics in display '''
-        if test_metrics['accuracy'] > best_acc:
-            best_acc = test_metrics['accuracy']
-            log_string(f'New best accuracy is: {best_acc:.5f}')
-        # if test_metrics['recall'] > best_recall:
-        #     best_recall = test_metrics['recall']
-        #     log_string(f'New best recall is: {best_recall:.5f}')
-        if test_metrics['loss'] < best_loss:
             best_loss = test_metrics['loss']
             log_string(f'New best loss is: {loss:.5f}')
-        if test_metrics['class_avg_iou'] > best_class_avg_iou:
-            best_class_avg_iou = test_metrics['class_avg_iou']
-            log_string(f'New best class avg mIOU is: {best_class_avg_iou:.5f}')
-        if test_metrics['instance_avg_iou'] > best_instance_avg_iou:
-            best_instance_avg_iou = test_metrics['instance_avg_iou']
-            log_string(f'New best inctance avg mIOU is: %.5f' % best_instance_avg_iou)
+
+        ''' Update best metrics in display '''
+        if test_metrics['distance'] < best_distance:
+            best_distance = test_metrics['distance']
+            log_string(f'New best distance is: {best_distance:.5f}')
+
         global_epoch += 1
 
 
