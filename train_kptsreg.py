@@ -168,7 +168,6 @@ def main(args):
             torch.nn.init.constant_(m.bias.data, 0.0)
 
     ''' LOAD MODEL '''
-    # checkpoint_path = str(experiment_output_dir) + f'/checkpoints/best_model.pth'
     checkpoint_path = get_current_model_path(str(experiment_output_dir))
     if Path(checkpoint_path).exists():
         checkpoint = torch.load(checkpoint_path)

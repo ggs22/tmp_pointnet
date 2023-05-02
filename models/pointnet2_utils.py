@@ -273,7 +273,7 @@ class PointNetRegressionHead(nn.Module):
             self.linears_y.append(nn.Linear(in_channel, keypoint_num))
 
     def forward(self, input):
-        res = torch.zeros(size=(8, 5, 2)).cuda()
+        res = torch.zeros(size=(8, 5, 3)).cuda()
         for ix_keypoint, (linear_x, linear_y) in enumerate(zip(self.linears_x, self.linears_y)):
             res[ix_keypoint, :, 0] = linear_x(input)
             res[ix_keypoint, :, 1] = linear_y(input)

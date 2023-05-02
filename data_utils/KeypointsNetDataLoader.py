@@ -90,14 +90,14 @@ class KeypointsDataset(Dataset):
             cls = self.classes[cat]
             cls = np.array([cls]).astype(np.int32)
             pcd = o3d.io.read_point_cloud(filename=ply_file_path)
-            zyx = np.asarray(pcd.points)
-            rgb = np.zeros(zyx.shape)  # let's keep only geometric information
-            data = np.concatenate([zyx, rgb], axis=1)
+            xyz = np.asarray(pcd.points)
+            rgb = np.asarray(pcd.colors)  # let's keep only geometric information
+            data = np.concatenate([xyz, rgb], axis=1)
             point_set = data
             sample_id = json_file_path.split(os.path.sep)[-1:][0][0:-5:]
             with open(file=json_file_path, mode='r') as f:
                 labelme_annotation = json.load(fp=f)
-                keypoints = np.zeros(shape=(8, 5, 2))
+                keypoints = np.zeros(shape=(8, 5, 3))
                 for ix, shape in enumerate(labelme_annotation['shapes']):
                     keypoints[ix] = np.array(shape['points'])
 
