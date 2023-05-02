@@ -248,11 +248,15 @@ def main(args):
             loss.backward()
             optimizer.step()
 
-            ''' lets output some sample for visialization '''
-            if i % 5 == 0:
+            def save_keyppoints_pred_to_json(points: torch.Tensor,
+                                             kpts_pred: torch.Tensor,
+                                             sample_id: str,
+                                             stage: str) -> None:
+
                 tx = points.transpose(1, 2).cpu().numpy().squeeze()
                 ty = kpts_pred.cpu().data.numpy()
-                np.savetxt(fname=f'{experiment_output_dir}{os.path.sep}{sample_id[0]}_xyz.txt', X=tx)
+                output_path = Path(experiment_output_dir).joinpath(f'{sample_id}_{stage}_xyz.txt')
+                np.savetxt(fname=str(output_path), X=tx)
                 weld_path_dict = dict()
                 for weld_path_ix in range(ty.shape[0]):
                     weld_path_dict[f'weld_path{weld_path_ix}'] = list()
@@ -260,8 +264,12 @@ def main(args):
                         x = float(ty[weld_path_ix, keypoint_ix, :][0])
                         y = float(ty[weld_path_ix, keypoint_ix, :][1])
                         weld_path_dict[f'weld_path{weld_path_ix}'].append([x, y])
-                with open(file=f'{experiment_output_dir}{os.path.sep}{sample_id[0]}_weld_paths.json', mode='w') as f:
+                output_path = Path(experiment_output_dir).joinpath(f'{sample_id}_{stage}_weld_paths.json')
+                with open(file=str(output_path), mode='w') as f:
                     json.dump(obj=weld_path_dict, fp=f)
+
+            if i % 5 == 0:
+                save_keyppoints_pred_to_json(points=points, kpts_pred=kpts_pred, sample_id=sample_id[0], stage="train")
 
         train_mean_dist = torch.concatenate(batchwise_distances).mean().item()
         train_mean_loss = np.mean(batchwise_losses)
@@ -287,6 +295,8 @@ def main(args):
                 loss = criterion(kpts_pred.squeeze().cuda(), torch.tensor(target.squeeze()).cuda())
                 batchwise_distances.append(m.euclidian_dist(torch.tensor(cur_pred_val), torch.squeeze(torch.tensor(target))))
                 batchwise_losses.append(loss.item())
+
+                save_keyppoints_pred_to_json(points=points, kpts_pred=kpts_pred, sample_id=sample_id[0], stage="test")
 
             test_metrics['distance'] = torch.concat(batchwise_distances).mean().item()
             test_metrics['loss'] = np.mean(batchwise_losses)
