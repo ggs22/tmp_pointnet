@@ -12,6 +12,7 @@ import re
 
 from pathlib import Path
 from tqdm import tqdm
+from colorama.ansi import Fore
 
 
 def parse_args() -> argparse.Namespace:
@@ -44,7 +45,8 @@ def main(args: argparse.Namespace) -> None:
     zivid.Application()  # needs to be instancied to load *.zdf files
 
     # Loop through json files in source directory
-    for json_file in tqdm(source_dir.glob(pattern="*.json"), desc=f"Processing *.json files from {str(source_dir)}"):
+    json_files = [f for f in source_dir.glob(pattern="*.json")]
+    for json_file in tqdm(json_files, desc=f"Processing *.json files from {str(source_dir)}"):
 
         # make sure that we are working with the LabelMe *.json files
         json_fname_regex = re.compile(pattern="(\d{18}_.{8})\.json")
@@ -60,36 +62,38 @@ def main(args: argparse.Namespace) -> None:
             with(open(file=str(json_file))) as f:
                 annotation = json.load(fp=f)
 
-            with(open(file=str(zdf_file))) as f:
-                frame = zivid.Frame(str(zdf_file))
+            frame = zivid.Frame(str(zdf_file))
+
+            # we can discard 2D image data
+            del annotation['imageData']
 
             # Loop through keypoints and extract extremums of dimensions x, y (actually these are the pixel indexes)
-            keypoints_extremums = dict()
-            keypoints_extremums['x_min'], keypoints_extremums['x_max'] = np.inf, -np.inf
-            keypoints_extremums['y_min'], keypoints_extremums['y_max'] = np.inf, -np.inf
-            keypoints_extremums['z_min'], keypoints_extremums['z_max'] = np.inf, -np.inf
+            kpts_limits = dict()
+            kpts_limits['x_min'], kpts_limits['x_max'] = np.inf, -np.inf
+            kpts_limits['y_min'], kpts_limits['y_max'] = np.inf, -np.inf
+            kpts_limits['z_min'], kpts_limits['z_max'] = np.inf, -np.inf
             for shape in annotation['shapes']:
                 for point in shape['points']:
-                    keypoints_extremums['x_min'] = min(point[0], keypoints_extremums['x_min'])
-                    keypoints_extremums['x_max'] = max(point[0], keypoints_extremums['x_max'])
-                    keypoints_extremums['y_min'] = min(point[1], keypoints_extremums['y_min'])
-                    keypoints_extremums['y_max'] = max(point[1], keypoints_extremums['y_max'])
+                    kpts_limits['x_min'] = min(point[0], kpts_limits['x_min'])
+                    kpts_limits['x_max'] = max(point[0], kpts_limits['x_max'])
+                    kpts_limits['y_min'] = min(point[1], kpts_limits['y_min'])
+                    kpts_limits['y_max'] = max(point[1], kpts_limits['y_max'])
 
             margin = args.crop_margin
-            keypoints_extremums['x_min'] = np.clip(a=int(np.floor(keypoints_extremums['x_min'])) - margin,
-                                                   a_min=0,
-                                                   a_max=frame.point_cloud().width)
-            keypoints_extremums['x_max'] = np.clip(a=int(np.ceil(keypoints_extremums['x_max'])) + margin,
-                                                   a_min=0,
-                                                   a_max=frame.point_cloud().width)
-            keypoints_extremums['y_min'] = np.clip(a=int(np.floor(keypoints_extremums['y_min'])) - margin,
-                                                   a_min=0,
-                                                   a_max=frame.point_cloud().height)
-            keypoints_extremums['y_max'] = np.clip(a=int(np.ceil(keypoints_extremums['y_max'])) + margin,
-                                                   a_min=0,
-                                                   a_max=frame.point_cloud().height)
+            kpts_limits['x_min'] = np.clip(a=int(np.floor(kpts_limits['x_min'])) - margin,
+                                           a_min=0,
+                                           a_max=frame.point_cloud().width)
+            kpts_limits['x_max'] = np.clip(a=int(np.ceil(kpts_limits['x_max'])) + margin,
+                                           a_min=0,
+                                           a_max=frame.point_cloud().width)
+            kpts_limits['y_min'] = np.clip(a=int(np.floor(kpts_limits['y_min'])) - margin,
+                                           a_min=0,
+                                           a_max=frame.point_cloud().height)
+            kpts_limits['y_max'] = np.clip(a=int(np.ceil(kpts_limits['y_max'])) + margin,
+                                           a_min=0,
+                                           a_max=frame.point_cloud().height)
 
-            croped_points_num = (keypoints_extremums['x_max'] - keypoints_extremums['x_min']) * (keypoints_extremums['y_max'] - keypoints_extremums['y_min'])
+            croped_points_num = (kpts_limits['x_max'] - kpts_limits['x_min']) * (kpts_limits['y_max'] - kpts_limits['y_min'])
             print(f"Croped points: {croped_points_num}")
 
             # downsampling of the number of points
@@ -99,34 +103,50 @@ def main(args: argparse.Namespace) -> None:
             points = frame.point_cloud().copy_data("xyz")
             rgb = frame.point_cloud().copy_data("rgba")[:, :, :3]
 
-            # Loop through keypoints and scale their xy coordinates
+            # loop through the weld paths
+            ix_to_pop = list()
             for shape_ix, shape in enumerate(annotation['shapes']):
+                # loop through keypoints and scale their xy coordinates
                 for point_ix, point in enumerate(shape['points']):
                     x, y = int(np.round(point[0])/(2**factor)), int(np.round(point[1])/(2**factor))
                     # colorize keypoint yellow
                     rgb[y, x, :] = [255, 255, 0]
                     # extract corresponding z annotations extremums
-                    keypoints_extremums['z_min'] = min(points[y, x, 2], keypoints_extremums['z_min'])
-                    keypoints_extremums['z_max'] = max(points[y, x, 2], keypoints_extremums['z_max'])
+                    kpts_limits['z_min'] = min(points[y, x, 2], kpts_limits['z_min'])
+                    kpts_limits['z_max'] = max(points[y, x, 2], kpts_limits['z_max'])
                     # we need to cast to float to avoid the json exportation bug
+                    kpt = [float(points[y, x, 1]),
+                           float(points[y, x, 0]),
+                           float(points[y, x, 2])]
+                    if np.isnan(np.array(kpt)).any():
+                        print(f"{Fore.YELLOW}"
+                              f"{str(zdf_file)}, weld path {shape_ix} has NAN values, skipped!"
+                              f"{Fore.RESET}")
+                        ix_to_pop.append(shape_ix)
+                        break
+
                     annotation['shapes'][shape_ix]['points'][point_ix] = [float(points[y, x, 1]),
                                                                           float(points[y, x, 0]),
                                                                           float(points[y, x, 2])]
 
+            # remove weld paths that haven't been converted to x,y,z values due to NANs
+            for ix in ix_to_pop[::-1]:
+                annotation['shapes'].pop(ix)
+
             # scale extremums and crop the points cloud
-            for key in keypoints_extremums:
+            for key in kpts_limits:
                 if 'z' not in key:  # we don't need to scale the z dimensions
-                    keypoints_extremums[key] /= (2 ** factor)
-                    keypoints_extremums[key] = int(keypoints_extremums[key])
+                    kpts_limits[key] /= (2 ** factor)
+                    kpts_limits[key] = int(kpts_limits[key])
 
-            z_ixx = np.union1d(np.where(points[:, :, 2] < keypoints_extremums['z_max'])[1],
-                               np.where(points[:, :, 2] > keypoints_extremums['z_min'])[1])
-            z_ixy = np.union1d(np.where(points[:, :, 2] < keypoints_extremums['z_max'])[0],
-                               np.where(points[:, :, 2] > keypoints_extremums['z_min'])[0])
             # TODO: (maybe) add z dimension croping
+            # z_ixx = np.union1d(np.where(points[:, :, 2] < keypoints_extremums['z_max'])[1],
+            #                    np.where(points[:, :, 2] > keypoints_extremums['z_min'])[1])
+            # z_ixy = np.union1d(np.where(points[:, :, 2] < keypoints_extremums['z_max'])[0],
+            #                    np.where(points[:, :, 2] > keypoints_extremums['z_min'])[0])
 
-            points = points[keypoints_extremums['y_min']:keypoints_extremums['y_max'], keypoints_extremums['x_min']:keypoints_extremums['x_max'], :]
-            rgb = rgb[keypoints_extremums['y_min']:keypoints_extremums['y_max'], keypoints_extremums['x_min']:keypoints_extremums['x_max'], :]
+            points = points[kpts_limits['y_min']:kpts_limits['y_max'], kpts_limits['x_min']:kpts_limits['x_max'], :]
+            rgb = rgb[kpts_limits['y_min']:kpts_limits['y_max'], kpts_limits['x_min']:kpts_limits['x_max'], :]
 
             # save annotation to ply file
             output_ply_path = output_dir.joinpath(json_file.stem + '.ply')
@@ -149,10 +169,9 @@ def main(args: argparse.Namespace) -> None:
             print(f"Saving {str(output_ply_path)} with {np.asarray(pcd.points).shape[0]} points")
             o3d.io.write_point_cloud(filename=str(output_ply_path), pointcloud=pcd)
 
-            # Save a copy of the modified *.json annotation file with the resulting *.ply file
+            # Save the modified *.json annotation file with the resulting *.ply file
             with open(file=output_dir.joinpath(json_file.name), mode='w') as f:
-                json.dump(obj=annotation, fp=f)
-            # shutil.copy(src=json_file, dst=output_dir.joinpath(json_file.name))
+                json.dump(obj=annotation, fp=f, indent=2)
 
 
 if __name__ == "__main__":

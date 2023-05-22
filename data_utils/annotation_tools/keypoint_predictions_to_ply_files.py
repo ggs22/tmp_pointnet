@@ -30,41 +30,75 @@ def get_predicted_keypoints(keypoints_prediction_path: Path) -> dict:
     return keypoints
 
 
+def get_target_keypoints(originals_dir: Path, sample_id: str) -> dict:
+    json_file_path = [file for file in originals_dir.glob(pattern=f"**/keypoints_ply_files/{sample_id}.json")][0]
+    with open(file=str(json_file_path), mode='r') as f:
+        target = json.load(fp=f)
+
+    return target
+
+
 def create_prediction_ply(originals_dir: Path,
                           output_dir: Path,
                           sample_id: str,
                           stage: str,
-                          keypoints: dict) -> None:
+                          prediction: dict,
+                          target: dict) -> None:
 
     # We process one sample at a time
-    for zdf_file in originals_dir.glob(pattern=f"**/{sample_id}.zdf"):
-        frame = zivid.Frame(str(zdf_file))
-        points = frame.point_cloud().copy_data(data_format="xyz")
-        colors = frame.point_cloud().copy_data(data_format="rgba")[:, :, 0:3]
+    zdf_file = [file for file in originals_dir.glob(pattern=f"**/{sample_id}.zdf")][0]
 
-        # For each welding path, extract each predicted keypoint
-        for weld_path_ix, pred_points in keypoints.items():
-            for point in pred_points:
-                x = int(np.round(point[0]))
-                y = int(np.round(point[1]))
+    # for zdf_file in :
+    frame = zivid.Frame(str(zdf_file))
+    points = frame.point_cloud().copy_data(data_format="xyz")
+    colors = frame.point_cloud().copy_data(data_format="rgba")[:, :, 0:3]
 
-                x = np.clip(x, 0, points.shape[1] - 1)
-                y = np.clip(y, 0, points.shape[0] - 1)
-                width = 10
-                colors[y-width:y+width, x-width:x+width, :] = [255, 0., 0.]  # Colorize predicted points in red
+    # create open3D objects
+    points = np.reshape(points, newshape=(points.shape[0] * points.shape[1], points.shape[2]))
+    colors = np.reshape(colors, newshape=(colors.shape[0] * colors.shape[1], colors.shape[2]))
+    colors = np.divide(colors, 255)
 
-        # create open3D objects
-        points = np.reshape(points, newshape=(points.shape[0] * points.shape[1], points.shape[2]))
-        colors = np.reshape(colors, newshape=(colors.shape[0] * colors.shape[1], colors.shape[2]))
-        colors = np.divide(colors, 255)
 
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(points)
-        pcd.colors = o3d.utility.Vector3dVector(colors)
+    # For each welding path, extract each predicted keypoint
+    for weld_path_ix, pred_points in tqdm(prediction.items()):
+        for point in pred_points:
+            x = point[0]
+            y = point[1]
+            z = point[2]
 
-        # Save to ply file
-        output_path = output_dir.joinpath(sample_id + f"_{stage}_predicted.ply")
-        o3d.io.write_point_cloud(filename=str(output_path), pointcloud=pcd)
+            width = 5
+            # add a prediction point as a red 3D cross
+            for i in range(int(-width/2), int(width/2)):
+                points = np.concatenate([points, np.array([[y + i, x, z]])], axis=0)
+                points = np.concatenate([points, np.array([[y, x + i, z]])], axis=0)
+                points = np.concatenate([points, np.array([[y, x, z + i]])], axis=0)
+                colors = np.concatenate([colors, np.array([[1, 0, 0]])], axis=0)
+                colors = np.concatenate([colors, np.array([[1, 0, 0]])], axis=0)
+                colors = np.concatenate([colors, np.array([[1, 0, 0]])], axis=0)
+
+    for weld_path in tqdm(target['shapes']):
+        for point in weld_path['points']:
+            x = point[0]
+            y = point[1]
+            z = point[2]
+
+            width = 5
+            # add a target point as a green 3D cross
+            for i in range(int(-width / 2), int(width / 2)):
+                points = np.concatenate([points, np.array([[y + i, x, z]])], axis=0)
+                points = np.concatenate([points, np.array([[y, x + i, z]])], axis=0)
+                points = np.concatenate([points, np.array([[y, x, z + i]])], axis=0)
+                colors = np.concatenate([colors, np.array([[0, 1, 0]])], axis=0)
+                colors = np.concatenate([colors, np.array([[0, 1, 0]])], axis=0)
+                colors = np.concatenate([colors, np.array([[0, 1, 0]])], axis=0)
+
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(points)
+    pcd.colors = o3d.utility.Vector3dVector(colors)
+
+    # Save to ply file
+    output_path = output_dir.joinpath(sample_id + f"_{stage}_predicted.ply")
+    o3d.io.write_point_cloud(filename=str(output_path), pointcloud=pcd)
 
 
 def extract_sample_id(json_file_name: Path) -> str:
@@ -98,11 +132,16 @@ if __name__ == "__main__":
     zivid.Application()  # (required to load Zivid frames)
 
     # Process every JSON predictions file
-    for json_prediction in tqdm(source_dir.glob(pattern="*.json"), desc="Process JSON -> PLY predctions"):
+    json_predicions_files = [file for file in source_dir.glob(pattern="*.json")]
+    for json_prediction in tqdm(json_predicions_files, desc="Process JSON -> PLY predctions"):
+
         keypoins = get_predicted_keypoints(json_prediction)
         sample_id, stage = extract_sample_id(json_prediction)
+        target = get_target_keypoints(originals_dir=ori_dir, sample_id=sample_id)
+
         create_prediction_ply(originals_dir=ori_dir,
                               output_dir=output_dir,
                               sample_id=sample_id,
                               stage=stage,
-                              keypoints=keypoins)
+                              prediction=keypoins,
+                              target=target)

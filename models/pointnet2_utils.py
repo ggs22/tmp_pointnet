@@ -1,12 +1,14 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from time import time
 import numpy as np
+import time
+
 
 def timeit(tag, t):
-    print("{}: {}s".format(tag, time() - t))
-    return time()
+    print("{}: {}s".format(tag, time.time() - t))
+    return time.time()
+
 
 def pc_normalize(pc):
     l = pc.shape[0]
@@ -15,6 +17,7 @@ def pc_normalize(pc):
     m = np.max(np.sqrt(np.sum(pc**2, axis=1)))
     pc = pc / m
     return pc
+
 
 def square_distance(src, dst):
     """
@@ -267,16 +270,21 @@ class PointNetRegressionHead(nn.Module):
         super(PointNetRegressionHead, self).__init__()
         self.linears_x = nn.ModuleList()
         self.linears_y = nn.ModuleList()
+        self.linears_z = nn.ModuleList()
         self.max_weld_num = max_weld_num
         for ix_keypoint in range(0, self.max_weld_num):
             self.linears_x.append(nn.Linear(in_channel, keypoint_num))
             self.linears_y.append(nn.Linear(in_channel, keypoint_num))
+            self.linears_z.append(nn.Linear(in_channel, keypoint_num))
 
     def forward(self, input):
         res = torch.zeros(size=(8, 5, 3)).cuda()
-        for ix_keypoint, (linear_x, linear_y) in enumerate(zip(self.linears_x, self.linears_y)):
-            res[ix_keypoint, :, 0] = linear_x(input)
-            res[ix_keypoint, :, 1] = linear_y(input)
+        for ix_weld_path, (linear_x, linear_y, linear_z) in enumerate(zip(self.linears_x,
+                                                                          self.linears_y,
+                                                                          self.linears_z)):
+            res[ix_weld_path, :, 0] = linear_x(input)
+            res[ix_weld_path, :, 1] = linear_y(input)
+            res[ix_weld_path, :, 2] = linear_z(input)
         return res
 
 

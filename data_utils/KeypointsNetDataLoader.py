@@ -7,6 +7,14 @@ from torch.utils.data import Dataset
 from pathlib import Path
 
 
+def pc_z_normalize(pc):
+    centroid = np.mean(pc, axis=0)
+    pc = pc - centroid
+    m = np.max(abs(pc), axis=0)
+    pc = pc / m
+    return pc
+
+
 def pc_normalize(pc):
     centroid = np.mean(pc, axis=0)
     pc = pc - centroid
@@ -91,7 +99,7 @@ class KeypointsDataset(Dataset):
             cls = np.array([cls]).astype(np.int32)
             pcd = o3d.io.read_point_cloud(filename=ply_file_path)
             xyz = np.asarray(pcd.points)
-            rgb = np.asarray(pcd.colors)  # let's keep only geometric information
+            rgb = np.asarray(pcd.colors)
             data = np.concatenate([xyz, rgb], axis=1)
             point_set = data
             sample_id = json_file_path.split(os.path.sep)[-1:][0][0:-5:]
@@ -105,15 +113,11 @@ class KeypointsDataset(Dataset):
                 self.cache[index] = (point_set, cls, keypoints, sample_id)
 
         # Normalize the xyz data
-        point_set[:, 0:3] = pc_normalize(point_set[:, 0:3])
+        point_set = pc_z_normalize(point_set)
 
         # Random resample
         choice = np.random.choice(point_set.shape[0], self.npoints, replace=True)
         point_set = point_set[choice, :]
-
-        # Cap the number of points
-        if point_set.shape[0] > self.npoints:
-            point_set = point_set[0:self.npoints]
 
         return point_set, cls, keypoints, sample_id
 

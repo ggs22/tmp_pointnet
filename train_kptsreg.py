@@ -16,6 +16,7 @@ import numpy as np
 import json
 import metrics.metrics as m
 import re
+import faulthandler
 
 from pathlib import Path
 from tqdm import tqdm
@@ -175,9 +176,9 @@ def main(args):
         classifier.load_state_dict(checkpoint['model_state_dict'])
         log_string(f'Use pretrain model from: {checkpoint_path}')
         if args.optimizer == 'Adam':
-            optimizer = torch.optim.Adam(classifier.parameters())
+            optimizer = torch.optim.Adam(classifier.parameters(), lr=args.learning_rate)
         else:
-            optimizer = torch.optim.SGD(classifier.parameters())
+            optimizer = torch.optim.SGD(classifier.parameters(), lr=args.learning_rate)
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     else:
         log_string('No existing model, starting training from scratch...')
@@ -199,7 +200,7 @@ def main(args):
         if isinstance(m, torch.nn.BatchNorm2d) or isinstance(m, torch.nn.BatchNorm1d):
             m.momentum = momentum
 
-    LEARNING_RATE_CLIP = 1e-5
+    LEARNING_RATE_CLIP = 1e-4
     MOMENTUM_ORIGINAL = 0.1
     MOMENTUM_DECCAY = 0.5
     MOMENTUM_DECCAY_STEP = args.step_size
@@ -262,7 +263,8 @@ def main(args):
                     for keypoint_ix in range(ty.shape[1]):
                         x = float(ty[weld_path_ix, keypoint_ix, :][0])
                         y = float(ty[weld_path_ix, keypoint_ix, :][1])
-                        weld_path_dict[f'weld_path{weld_path_ix}'].append([x, y])
+                        z = float(ty[weld_path_ix, keypoint_ix, :][2])
+                        weld_path_dict[f'weld_path{weld_path_ix}'].append([x, y, z])
                 output_path = Path(experiment_output_dir).joinpath(f'{sample_id}_{stage}_weld_paths.json')
                 with open(file=str(output_path), mode='w') as f:
                     json.dump(obj=weld_path_dict, fp=f)
@@ -338,5 +340,6 @@ def main(args):
 
 
 if __name__ == '__main__':
+    faulthandler.enable()
     args = parse_args()
     main(args)
