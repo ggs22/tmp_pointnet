@@ -20,6 +20,8 @@ import faulthandler
 
 from pathlib import Path
 from tqdm import tqdm
+
+import utils.paths_utils as pu
 from data_utils.KeypointsNetDataLoader import KeypointsDataset
 
 
@@ -52,24 +54,6 @@ def to_categorical(y, num_classes):
     return new_y
 
 
-def get_current_model_path(experiment_output_dir: str, mode: str = 'current') -> str:
-    checkpoint_path = Path(experiment_output_dir).joinpath('checkpoints')
-    if mode == 'current':
-        pattern = r'pointnet_model_epoch_([0-9]+).pth'
-    elif mode == 'best':
-        pattern = r'pointnet_model_best_valid_epoch_([0-9]+).pth'
-    latest_ix = -1
-    res = "NONEXISTANT"
-    for file_path in checkpoint_path.glob(pattern='*.pth'):
-        match = re.match(pattern=pattern, string=str(file_path.name))
-        if match is not None:
-            ix = int(match[1])
-            if ix > latest_ix:
-                latest_ix = ix
-                res = str(file_path)
-    return res
-
-
 def parse_args():
     parser = argparse.ArgumentParser('Model')
     parser.add_argument('--model', type=str, default='pointnet_part_seg', help='model name')
@@ -82,7 +66,7 @@ def parse_args():
     parser.add_argument('--decay_rate', type=float, default=1e-4, help='weight decay')
     parser.add_argument('--npoint', type=int, default=2048, help='point Number')
     parser.add_argument('--normal', action='store_true', default=False, help='use normals')
-    parser.add_argument('--step_size', type=int, default=40, help='decay step for lr decay')
+    parser.add_argument('--step_size', type=int, default=200, help='decay step for lr decay')
     parser.add_argument('--lr_decay', type=float, default=0.5, help='decay rate for lr decay')
     parser.add_argument('--num_classes', type=int, default=2, help='number of classes')
     parser.add_argument('--num_parts', type=int, default=2, help='number of parts (contained by classes)')
@@ -169,7 +153,7 @@ def main(args):
             torch.nn.init.constant_(m.bias.data, 0.0)
 
     ''' LOAD MODEL '''
-    checkpoint_path = get_current_model_path(str(experiment_output_dir))
+    checkpoint_path = pu.get_current_model_path(str(experiment_output_dir))
     if Path(checkpoint_path).exists():
         checkpoint = torch.load(checkpoint_path)
         start_epoch = checkpoint['epoch']
@@ -194,13 +178,16 @@ def main(args):
                 weight_decay=args.decay_rate
             )
         else:
-            optimizer = torch.optim.SGD(classifier.parameters(), lr=args.learning_rate, momentum=0.9)
+            optimizer = torch.optim.SGD(classifier.parameters(),
+                                        lr=args.learning_rate,
+                                        momentum=0.5,
+                                        weight_decay=args.decay_rate)
 
     def bn_momentum_adjust(m, momentum):
         if isinstance(m, torch.nn.BatchNorm2d) or isinstance(m, torch.nn.BatchNorm1d):
             m.momentum = momentum
 
-    LEARNING_RATE_CLIP = 1e-4
+    LEARNING_RATE_CLIP = 1e-7
     MOMENTUM_ORIGINAL = 0.1
     MOMENTUM_DECCAY = 0.5
     MOMENTUM_DECCAY_STEP = args.step_size
@@ -232,8 +219,8 @@ def main(args):
             optimizer.zero_grad()
 
             points = points.data.numpy()
-            points[:, :, 0:3] = provider.random_scale_point_cloud(points[:, :, 0:3])
-            points[:, :, 0:3] = provider.shift_point_cloud(points[:, :, 0:3])
+            # points[:, :, 0:3] = provider.random_scale_point_cloud(points[:, :, 0:3])
+            # points[:, :, 0:3] = provider.shift_point_cloud(points[:, :, 0:3])
             points = torch.Tensor(points)
             points, label, target = points.float().cuda(), label.long().cuda(), target.float().cuda()
             points = points.transpose(2, 1)
@@ -246,6 +233,7 @@ def main(args):
             loss = criterion(kpts_pred, torch.squeeze(target))
             batchwise_losses.append(loss.item())
             loss.backward()
+            # torch.nn.utils.clip_grad_norm_(classifier.parameters(), 1.0)
             optimizer.step()
 
             def save_keyppoints_pred_to_json(points: torch.Tensor,
@@ -306,13 +294,14 @@ def main(args):
                    f"test Distance: {test_metrics['distance']}, "
                    f"test Loss: {test_metrics['loss']}, ")
 
-        def save_model(tag: str = '', mode: str = 'current'):
-            current_model_path = get_current_model_path(str(experiment_output_dir), mode)
+        def save_model(current_model_path: str, epoch: int):
             if Path(current_model_path).exists():
                 os.remove(path=current_model_path)
+            num_match = re.match(pattern=r'(.*pointnet_model.*epoch_)\d+(\.pth)', string=current_model_path)
+            if num_match:
+                current_model_path = num_match[1] + str(epoch) + num_match[2]
             logger.info(f"Save model with new best loss {test_metrics['loss']}...")
-            savepath = str(checkpoints_dir) + f'/pointnet_model{tag}.pth'
-            log_string(f'Saving at {savepath}')
+            log_string(f'Saving at {current_model_path}')
             state = {
                 'epoch': epoch,
                 'train_dist': train_mean_dist,
@@ -322,14 +311,14 @@ def main(args):
                 'model_state_dict': classifier.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
             }
-            torch.save(state, savepath)
-
-        save_model(tag=f"_epoch_{epoch}")
+            torch.save(state, current_model_path)
 
         if test_metrics['loss'] < best_loss:
             best_loss = test_metrics['loss']
             log_string(f'New best loss is: {best_loss:.5f}')
-            save_model(tag=f"_best_valid_epoch_{epoch}")
+            save_model(pu.get_best_validation_model_path(str(experiment_output_dir)), epoch)
+        else:
+            save_model(pu.get_current_model_path(str(experiment_output_dir)), epoch)
 
         ''' Update best metrics in display '''
         if test_metrics['distance'] < best_distance:

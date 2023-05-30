@@ -106,6 +106,7 @@ class KeypointsDataset(Dataset):
             with open(file=json_file_path, mode='r') as f:
                 labelme_annotation = json.load(fp=f)
                 keypoints = np.zeros(shape=(8, 5, 3))
+                # TODO add joint type parsing and one-hot encoding
                 for ix, shape in enumerate(labelme_annotation['shapes']):
                     keypoints[ix] = np.array(shape['points'])
 

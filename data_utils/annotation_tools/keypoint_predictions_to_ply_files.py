@@ -58,7 +58,6 @@ def create_prediction_ply(originals_dir: Path,
     colors = np.reshape(colors, newshape=(colors.shape[0] * colors.shape[1], colors.shape[2]))
     colors = np.divide(colors, 255)
 
-
     # For each welding path, extract each predicted keypoint
     for weld_path_ix, pred_points in tqdm(prediction.items()):
         for point in pred_points:

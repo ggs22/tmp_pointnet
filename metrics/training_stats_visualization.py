@@ -15,6 +15,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output_dir",
                         help="The directory where the graph is going to be saved. If none is providied, the"
                              "graph will be saved in the same location than the log file.")
+    parser.add_argument("--color",
+                        type=str,
+                        default='b',
+                        help="Colors used for the plots. See matplotlib plot() arguments for details.")
 
     return parser.parse_args()
 
@@ -56,19 +60,24 @@ def get_stats_from_log_file(log_file_path: str) -> dict:
     return stats
 
 
-def save_stats_graphs(stats_dict: dict, output_dir: str, interval: list = None) -> None:
+def save_stats_graphs(stats_dict: dict, output_dir: str, interval: list = None, **kwargs) -> None:
+    plt.ion()
 
-    def _plot_metric(epochs: list, metrics: list, metric_name: str, interval: str = None):
-        output_path = Path(output_dir).joinpath(f"{metric_name}" +
-                                                f"_{interval}" * (interval is not None) +
-                                                ".png")
+    def _plot_metric(epochs: list, metrics: list, metric_name: str, interval: str = None, **kwargs):
+        # output_path = Path(output_dir).joinpath(f"{metric_name}" +
+        #                                         f"_{interval}" * (interval is not None) +
+        #                                         ".png")
+        fig = plt.figure(figsize=(10, 10), num=f"{metric_name}" + f"_{interval}" * (interval is not None) + ".png")
         lmin = min(len(epochs), len(metrics))
-        plt.plot(epochs[0:lmin], metrics[0:lmin])
-        print(f"Saving {output_path.name}")
+        plt.plot(epochs[0:lmin], metrics[0:lmin], **kwargs)
+        # print(f"Saving {output_path.name}")
         plt.xlabel("Époque")
         plt.ylabel(metric_name)
-        plt.savefig(fname=str(output_path))
-        plt.close()
+        plt.title(f"{metric_name}")
+        # plt.savefig(fname=str(output_path))
+        plt.show(block=False)
+
+        return fig
 
     for stage, stats in stats_dict.items():
         if stage != "epoch":
@@ -80,16 +89,19 @@ def save_stats_graphs(stats_dict: dict, output_dir: str, interval: list = None) 
                     _plot_metric(epochs=stats_dict['epoch'][min_bound:max_bound],
                                  metrics=stats[min_bound:max_bound],
                                  metric_name=stage,
-                                 interval=f"{min_bound}_{max_bound}")
+                                 interval=f"{min_bound}_{max_bound}",
+                                 **kwargs)
                 else:
                     _plot_metric(epochs=stats_dict['epoch'][min_bound:],
                                  metrics=stats[min_bound:],
                                  metric_name=stage,
-                                 interval=f"{min_bound}_")
+                                 interval=f"{min_bound}_",
+                                 **kwargs)
             else:
                 _plot_metric(epochs=stats_dict['epoch'],
                              metrics=stats,
-                             metric_name=stage)
+                             metric_name=stage,
+                             **kwargs)
 
 
 if __name__ == "__main__":
@@ -107,5 +119,5 @@ if __name__ == "__main__":
         output_dir = str(output_dir)
 
     stats_dict = get_stats_from_log_file(log_file_path=log_file_path)
-    save_stats_graphs(stats_dict=stats_dict, output_dir=output_dir, interval=[500, None])
-    save_stats_graphs(stats_dict=stats_dict, output_dir=output_dir)
+    # save_stats_graphs(stats_dict=stats_dict, output_dir=output_dir, interval=[3000, None])
+    save_stats_graphs(stats_dict=stats_dict, output_dir=output_dir, c=args.color)
