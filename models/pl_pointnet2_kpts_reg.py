@@ -9,9 +9,10 @@ import pytorch_lightning as pl
 
 
 class KeypointNet2(pl.LightningModule):
-    def __init__(self, num_classes, normal_channel=False, channels_offset: int = None, num_point: int = None, optimizer_name='SGD', learning_rate=1e-3):
+    def __init__(self, num_classes, batch_size, normal_channel=False, channels_offset: int = None, num_point: int = None, optimizer_name='SGD', learning_rate=1e-3):
         super().__init__()
         self.num_classes = num_classes
+        self.batch_size = batch_size
         self.optimizer_name = optimizer_name
         self.learning_rate = learning_rate
         if normal_channel:
@@ -117,6 +118,7 @@ class KeypointNet2(pl.LightningModule):
                 'train_loss': loss,
                 # 'distance': dist
             },
+            batch_size=self.batch_size,
             on_step=False,
             on_epoch=True,
             prog_bar=True
@@ -149,6 +151,7 @@ class KeypointNet2(pl.LightningModule):
                 'val_loss': loss,
                 # 'distance': dist
             },
+            batch_size=self.batch_size,
             on_step=False,
             on_epoch=True,
             prog_bar=True

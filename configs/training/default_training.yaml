@@ -1,0 +1,6 @@
+batch_size: 1
+epoch: 10000
+gpu: 0
+step_size: 1000
+data_root: data/
+log_dir: pointet_kpts_reg

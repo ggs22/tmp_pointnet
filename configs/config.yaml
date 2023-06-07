@@ -1,0 +1,4 @@
+defaults:
+  - model: default_model
+  - optimization: default_optimization
+  - training: default_training

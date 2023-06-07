@@ -1,0 +1,6 @@
+model: pointnet2_kpts_reg
+normal: True
+npoint: 1500
+num_classes: 2
+num_parts: 2
+channel_offset: -14

@@ -1,0 +1,4 @@
+learning_rate: 0.001
+optimizer: SGD
+decay_rate: 1e-4
+lr_decay: 1e-1
