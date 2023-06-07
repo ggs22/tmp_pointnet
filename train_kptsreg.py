@@ -18,6 +18,7 @@ import metrics.metrics as m
 import re
 import faulthandler
 
+from torch.utils.tensorboard import SummaryWriter
 from pathlib import Path
 from tqdm import tqdm
 
@@ -118,6 +119,9 @@ def main(args):
 
     log_string(f"Using CUDA: {torch.cuda.is_available()}")
 
+    # Tensorboard loger
+    writer = SummaryWriter(log_dir=str(experiment_output_dir.joinpath("tb_runs")))
+
     '''DATA'''
     root = args.data_root
     train_dataset = KeypointsDataset(root=root, npoints=args.npoint, split='trainval', normal_channel=args.normal)
@@ -201,9 +205,14 @@ def main(args):
         batchwise_losses = list()
 
         log_string(f'Epoch {global_epoch + 1} ({epoch + 1}/{args.epoch}):')
+
         '''Adjust learning rate and BN momentum'''
-        lr = max(args.learning_rate * (args.lr_decay ** (epoch // args.step_size)), LEARNING_RATE_CLIP)
-        log_string(f'Learning rate:{lr}')
+        if args.step_size <= 0:
+            lr = args.learning_rate
+        else:
+            lr = max(args.learning_rate * (args.lr_decay ** (epoch // args.step_size)), LEARNING_RATE_CLIP)
+
+        log_string(f"Learning rate:{lr}" + f" (sheduled)" * (args.step_size > 0))
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
         momentum = MOMENTUM_ORIGINAL * (MOMENTUM_DECCAY ** (epoch // MOMENTUM_DECCAY_STEP))
@@ -260,10 +269,26 @@ def main(args):
             if i % 5 == 0:
                 save_keyppoints_pred_to_json(points=points, kpts_pred=kpts_pred, sample_id=sample_id[0], stage="train")
 
-        train_mean_dist = torch.concatenate(batchwise_distances).mean().item()
+        dist_tensor = torch.concatenate(batchwise_distances)
+        train_mean_dist = dist_tensor.mean().item()
+        quantiles = [.25, .5, .75]
+        dist_quantiles = torch.quantile(dist_tensor, q=torch.tensor(data=quantiles, device=dist_tensor.device))
+        q_string = str()
+        for quantile, distance in zip(quantiles, dist_quantiles):
+            q_string += f"{quantile:.0%}: {distance:.2f}, "
+        q_string = q_string[:-2:]
         train_mean_loss = np.mean(batchwise_losses)
-        log_string(f'\nMean train distance: {train_mean_dist:.5f}\n'
-                   f'Mean train loss: {train_mean_loss:.5f}')
+
+        writer.add_scalar(tag="lr", scalar_value=lr, global_step=epoch)
+        writer.add_scalar(tag="train dist (mm)", scalar_value=train_mean_dist, global_step=epoch)
+
+        # TODO: add quantile histogram to tensorboard
+
+        log_string(f'\nMean train distance: {train_mean_dist:.5f}, '
+                   f'quantiles: {q_string}, '
+                   f'min: {dist_tensor.min().item():.2f}, '
+                   f'max: {dist_tensor.max().item():.2f}, '
+                   f'total train loss: {train_mean_loss:.5f}')
 
         batchwise_distances.clear()
         batchwise_losses.clear()
