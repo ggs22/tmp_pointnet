@@ -293,13 +293,12 @@ class PointNetRegressionHead(nn.Module):
 
     def forward(self, input):
         f"""
-        Input expect input of size: ({self.num_classes},
-                                     {self.max_weld_num},
+        Input expect input of size: ({self.max_weld_num},
                                      {self.keypoint_num},
                                      {len(self.spacial_dims)})
         """
 
-        res = torch.zeros(size=(self.num_classes, self.max_weld_num, self.keypoint_num, len(self.spacial_dims))).cuda()
+        res = torch.zeros(size=(self.max_weld_num, self.keypoint_num, len(self.spacial_dims))).cuda()
 
         # for each weld path
         linears = [self.__getattr__(f"linear_x"),

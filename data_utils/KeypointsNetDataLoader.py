@@ -116,6 +116,8 @@ class KeypointsDataset(Dataset):
 
             # TODO add classification targets
             # Random resample
+
+            # TODO serialize a index-choice map to avoid big jumps in loss...
             choice = np.random.choice(point_set.shape[0], self.npoints, replace=True)
             point_set = point_set[choice, :]
 
