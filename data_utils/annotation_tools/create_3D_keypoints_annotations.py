@@ -31,6 +31,10 @@ def parse_args() -> argparse.Namespace:
                         help="The pixel margin left when cropping. Croping is done around annotations x, y extremums.",
                         type=int,
                         default=200)
+    parser.add_argument("--log_file_path",
+                        help="Path of the log file that will containes descriptives statistics about the pointclouds.",
+                        type=str,
+                        required=True)
 
     return parser.parse_args()
 
@@ -41,8 +45,11 @@ def main(args: argparse.Namespace) -> None:
     source_dir: Path = Path(args.source_dir)
     output_dir: Path = source_dir.joinpath("keypoints_ply_files")
     output_dir.mkdir(parents=True, exist_ok=True)
+    log_path = args.log_file_path
 
     zivid.Application()  # needs to be instancied to load *.zdf files
+
+    stats = {str(source_dir.stem): dict()}
 
     # Loop through json files in source directory
     json_files = [f for f in source_dir.glob(pattern="*.json")]
@@ -110,11 +117,15 @@ def main(args: argparse.Namespace) -> None:
                 for point_ix, point in enumerate(shape['points']):
                     x, y = int(np.round(point[0])/(2**factor)), int(np.round(point[1])/(2**factor))
                     # colorize keypoint yellow
+                    if x >= rgb.shape[1]:
+                        x = rgb.shape[1] - 1
+                    if y >= rgb.shape[0]:
+                        y = rgb.shape[0] - 1
                     rgb[y, x, :] = [255, 255, 0]
                     # extract corresponding z annotations extremums
                     kpts_limits['z_min'] = min(points[y, x, 2], kpts_limits['z_min'])
                     kpts_limits['z_max'] = max(points[y, x, 2], kpts_limits['z_max'])
-                    # we need to cast to float to avoid the json exportation bug
+                    # we need to cast to native float to avoid the json exportation bug
                     kpt = [float(points[y, x, 1]),
                            float(points[y, x, 0]),
                            float(points[y, x, 2])]
@@ -134,10 +145,10 @@ def main(args: argparse.Namespace) -> None:
                 annotation['shapes'].pop(ix)
 
             # scale extremums and crop the points cloud
-            for key in kpts_limits:
-                if 'z' not in key:  # we don't need to scale the z dimensions
-                    kpts_limits[key] /= (2 ** factor)
-                    kpts_limits[key] = int(kpts_limits[key])
+            for file in kpts_limits:
+                if 'z' not in file:  # we don't need to scale the z dimensions
+                    kpts_limits[file] /= (2 ** factor)
+                    kpts_limits[file] = int(kpts_limits[file])
 
             # TODO: (maybe) add z dimension croping
             # z_ixx = np.union1d(np.where(points[:, :, 2] < keypoints_extremums['z_max'])[1],
@@ -169,9 +180,26 @@ def main(args: argparse.Namespace) -> None:
             print(f"Saving {str(output_ply_path)} with {np.asarray(pcd.points).shape[0]} points")
             o3d.io.write_point_cloud(filename=str(output_ply_path), pointcloud=pcd)
 
+            # write some descriptive stats that will be saved to the log file
+            stats[str(source_dir.stem)][json_file.stem] = np.asarray(pcd.points).shape[0]
+
             # Save the modified *.json annotation file with the resulting *.ply file
             with open(file=output_dir.joinpath(json_file.name), mode='w') as f:
                 json.dump(obj=annotation, fp=f, indent=2)
+
+    # write some descriptive stats to the log file
+    num_points_list = list()
+    for file, num_points in stats[str(source_dir.stem)].items():
+        num_points_list.append(num_points)
+    num_points = np.array(num_points_list)
+    stats[str(source_dir.stem)]['num files'] = len(num_points_list)
+    stats[str(source_dir.stem)]['max points'] = int(num_points.max())
+    stats[str(source_dir.stem)]['min points'] = int(num_points.min())
+    stats[str(source_dir.stem)]['mean points'] = int(num_points.mean())
+    for num_p, quantil in zip(np.quantile(num_points, q=[.25, .5, .75]), ['.25', '.50', '.75']):
+        stats[str(source_dir.stem)][f'quantiles {quantil}'] = int(num_p)
+    with open(file=log_path, mode='a') as log_file:
+        json.dump(obj=stats, fp=log_file, indent=2)
 
 
 if __name__ == "__main__":

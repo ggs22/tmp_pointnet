@@ -1,6 +1,7 @@
 from pathlib import Path
 import re
 
+
 def get_root_dir() -> str:
     return str(Path(__file__).absolute().parent.parent)
 
@@ -8,6 +9,12 @@ def get_root_dir() -> str:
 def get_data_dir() -> str:
     data_dir = str(Path(get_root_dir()).joinpath("data"))
     return data_dir
+
+
+def get_weld_kpts_dir() -> str:
+    data_dir = get_data_dir()
+    weld_kpts_dir = str(Path(data_dir).joinpath("poutrelle", "p1"))
+    return weld_kpts_dir
 
 
 def get_current_model_path(experiment_output_dir: str) -> str:

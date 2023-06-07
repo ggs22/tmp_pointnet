@@ -2,9 +2,13 @@ import os
 import json
 import numpy as np
 import open3d as o3d
+import torch
+import torch.nn.functional as F
+import utils.paths_utils as pu
 
 from torch.utils.data import Dataset
 from pathlib import Path
+
 
 
 def pc_z_normalize(pc):
@@ -27,16 +31,16 @@ class KeypointsDataset(Dataset):
     def __init__(self, root, npoints=2500, split='train', class_choice=None, normal_channel=False):
         self.npoints = npoints
         self.root = root
-        self.catfile = Path(root).joinpath('synsetoffset2category.txt')
+        self.catfile = Path(root).joinpath('joints_types.txt')  # TODO unhardcode
         self.categories = {}
         self.normal_channel = normal_channel
+        self.classes_num = 0
 
         with open(str(self.catfile), 'r') as f:
             for line in f:
                 ls = line.strip().split()
-                self.categories[ls[0]] = ls[1]
-        self.categories = {k: v for k, v in self.categories.items()}
-        self.classes_original = dict(zip(self.categories, range(len(self.categories))))
+                self.categories[ls[0]] = int(ls[1])
+                self.classes_num += 1
 
         if class_choice is not None:
             self.categories = {k: v for k, v in self.categories.items() if k in class_choice}
@@ -51,40 +55,37 @@ class KeypointsDataset(Dataset):
             test_ids = set([str(d.split('/')[2]) for d in json.load(f)])
 
         # Make the split lists
-        for category in self.categories:
-            self.meta[category] = list()
-            dir_point = os.path.join(self.root, self.categories[category])
-            filenames = sorted(os.listdir(dir_point))
-            if split == 'trainval':
-                filenames = [filename for filename in filenames if ((filename[0:-4] in train_ids) or (filename[0:-4] in val_ids))]
-            elif split == 'train':
-                filenames = [filename for filename in filenames if filename[0:-4] in train_ids]
-            elif split == 'val':
-                filenames = [filename for filename in filenames if filename[0:-4] in val_ids]
-            elif split == 'test':
-                filenames = [filename for filename in filenames if filename[0:-4] in test_ids]
-            else:
-                print(f'Unknown split: {split}. Exiting..')
-                exit(-1)
+        # for category in self.categories:
+        # self.meta[category] = list()
+        self.meta = list()
+        # dir_point = os.path.join(self.root, self.categories[category])
+        dir_point = pu.get_weld_kpts_dir()
+        pu.get_data_dir()
+        filenames = sorted(os.listdir(dir_point))
+        if split == 'trainval':
+            filenames = [filename for filename in filenames if ((filename[0:-4] in train_ids) or (filename[0:-4] in val_ids))]
+        elif split == 'train':
+            filenames = [filename for filename in filenames if filename[0:-4] in train_ids]
+        elif split == 'val':
+            filenames = [filename for filename in filenames if filename[0:-4] in val_ids]
+        elif split == 'test':
+            filenames = [filename for filename in filenames if filename[0:-4] in test_ids]
+        else:
+            print(f'Unknown split: {split}. Exiting..')
+            exit(-1)
 
-            for file in filenames:
-                ply_path = str(Path(dir_point).joinpath(Path(file).stem + ".ply"))
-                json_path = str(Path(dir_point).joinpath(Path(file).stem + ".json"))
-                self.meta[category].append((ply_path, json_path))
+        for file in filenames:
+            ply_path = str(Path(dir_point).joinpath(Path(file).stem + ".ply"))
+            json_path = str(Path(dir_point).joinpath(Path(file).stem + ".json"))
+            self.meta.append((ply_path, json_path))
 
         # Poplulate a list of file paths for this split
         self.datapath = list()
-        for category in self.categories:
-            for files_pair in self.meta[category]:
-                self.datapath.append((category, files_pair))
+        # for category in self.categories:
+        for files_pair in self.meta:
+            self.datapath.append(files_pair)
 
-        self.classes = dict()
-        for category in self.categories.keys():
-            self.classes[category] = self.classes_original[category]
-
-        self.seg_classes = {'beam': [0, 1]}
-
-        self.cache = dict()  # from index to (point_set, cls, seg) tuple
+        self.cache = dict()  # from index to sample & target tuple
         self.cache_size = 20000
 
     def __getitem__(self, index):
@@ -92,33 +93,37 @@ class KeypointsDataset(Dataset):
         if index in self.cache:
             point_set, cls, keypoints, sample_id = self.cache[index]
         else:
-            ply_file_path = self.datapath[index][1][0]
-            json_file_path = self.datapath[index][1][1]
-            cat = self.datapath[index][0]
-            cls = self.classes[cat]
-            cls = np.array([cls]).astype(np.int32)
+            ply_file_path = self.datapath[index][0]
+            json_file_path = self.datapath[index][1]
             pcd = o3d.io.read_point_cloud(filename=ply_file_path)
             xyz = np.asarray(pcd.points)
             rgb = np.asarray(pcd.colors)
             data = np.concatenate([xyz, rgb], axis=1)
             point_set = data
             sample_id = json_file_path.split(os.path.sep)[-1:][0][0:-5:]
+            keypoints = np.zeros(shape=(self.classes_num, 8, 5, 3))  # TODO unhardcode
+
             with open(file=json_file_path, mode='r') as f:
                 labelme_annotation = json.load(fp=f)
-                keypoints = np.zeros(shape=(8, 5, 3))
-                # TODO add joint type parsing and one-hot encoding
-                for ix, shape in enumerate(labelme_annotation['shapes']):
-                    keypoints[ix] = np.array(shape['points'])
+                for _, target in self.categories.items():
+                    for ix, shape in enumerate(labelme_annotation['shapes']):
+                        joint_type = shape['label']
+                        joint_ix = self.categories[joint_type]
+                        cls = F.one_hot(torch.tensor(joint_ix),
+                                        num_classes=len(self.categories))  # category 0 is for background
+                        cls = cls.type(torch.float)
+                        keypoints[target, ix] = np.array(shape['points'])  # get each kpts in x, y, z
 
-            if len(self.cache) < self.cache_size:
+            # TODO add classification targets
+            # Random resample
+            choice = np.random.choice(point_set.shape[0], self.npoints, replace=True)
+            point_set = point_set[choice, :]
+
+            # Normalize the xyz data
+            point_set = pc_z_normalize(point_set)
+
+            if len(self.cache) < self.__len__():
                 self.cache[index] = (point_set, cls, keypoints, sample_id)
-
-        # Normalize the xyz data
-        point_set = pc_z_normalize(point_set)
-
-        # Random resample
-        choice = np.random.choice(point_set.shape[0], self.npoints, replace=True)
-        point_set = point_set[choice, :]
 
         return point_set, cls, keypoints, sample_id
 

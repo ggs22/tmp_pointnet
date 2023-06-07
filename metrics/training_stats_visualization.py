@@ -1,10 +1,14 @@
+"""
+Will only work with log files from TMS model <= v0.0.2 experiments runs.
+GGS 2023-06-06.
+"""
+
 import argparse
 import re
 import matplotlib.pyplot as plt
+import numpy as np
 
 from pathlib import Path
-
-import numpy as np
 
 
 def parse_args() -> argparse.Namespace:
@@ -17,8 +21,12 @@ def parse_args() -> argparse.Namespace:
                              "graph will be saved in the same location than the log file.")
     parser.add_argument("--color",
                         type=str,
-                        default='b',
+                        default='',
                         help="Colors used for the plots. See matplotlib plot() arguments for details.")
+    parser.add_argument("--label",
+                        type=str,
+                        help="Label that will be used to identify/name the graph. Optional, defaults to null string.",
+                        default="")
 
     return parser.parse_args()
 
@@ -64,17 +72,28 @@ def save_stats_graphs(stats_dict: dict, output_dir: str, interval: list = None, 
     plt.ion()
 
     def _plot_metric(epochs: list, metrics: list, metric_name: str, interval: str = None, **kwargs):
-        # output_path = Path(output_dir).joinpath(f"{metric_name}" +
-        #                                         f"_{interval}" * (interval is not None) +
-        #                                         ".png")
-        fig = plt.figure(figsize=(10, 10), num=f"{metric_name}" + f"_{interval}" * (interval is not None) + ".png")
+
+        # set plot name
+        if 'label' in kwargs.keys():
+            label = kwargs['label']
+            has_label = True
+        else:
+            label = ""
+            has_label = True
+        plot_name = f"{metric_name}" + f"_{interval}" * (interval is not None) + f"_{label}" * has_label
+
+        # plot
         lmin = min(len(epochs), len(metrics))
+        fig = plt.figure(figsize=(10, 10), num=plot_name + ".png")
         plt.plot(epochs[0:lmin], metrics[0:lmin], **kwargs)
-        # print(f"Saving {output_path.name}")
         plt.xlabel("Époque")
         plt.ylabel(metric_name)
-        plt.title(f"{metric_name}")
-        # plt.savefig(fname=str(output_path))
+        plt.title(plot_name)
+
+        # save figure
+        output_path = Path(output_dir).joinpath(plot_name + ".png")
+        print(f"Saving {output_path.name}")
+        plt.savefig(fname=str(output_path))
         plt.show(block=False)
 
         return fig
@@ -118,6 +137,11 @@ if __name__ == "__main__":
         output_dir.mkdir(parents=True, exist_ok=True)
         output_dir = str(output_dir)
 
+    if args.color == "":
+        color = tuple(np.random.randint(low=50, high=255, size=3)/255)
+    else:
+        color = args.color
+
     stats_dict = get_stats_from_log_file(log_file_path=log_file_path)
     # save_stats_graphs(stats_dict=stats_dict, output_dir=output_dir, interval=[3000, None])
-    save_stats_graphs(stats_dict=stats_dict, output_dir=output_dir, c=args.color)
+    save_stats_graphs(stats_dict=stats_dict, output_dir=output_dir, label=args.label, c=color)

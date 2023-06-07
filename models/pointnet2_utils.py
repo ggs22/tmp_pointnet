@@ -266,22 +266,94 @@ class PointNetSetAbstractionMsg(nn.Module):
 
 
 class PointNetRegressionHead(nn.Module):
-    def __init__(self, in_channel: int, keypoint_num: int = 5, max_weld_num: int = 8):
+    def __init__(self, in_channel: int, keypoint_num: int = 5, max_weld_num: int = 8, num_classes: int = 12):
         super(PointNetRegressionHead, self).__init__()
-        self.linears_x = nn.ModuleList()
-        self.linears_y = nn.ModuleList()
-        self.linears_z = nn.ModuleList()
+
+        self.spacial_dims = ['x', 'y', 'z']
+
+        self.keypoint_num = keypoint_num
         self.max_weld_num = max_weld_num
+        self.num_classes = num_classes
+
+        # for each spacial dimension (x, y ,z)...
+        for d in self.spacial_dims:
+            # we add a module list
+            self.__setattr__(name=f"linear_{d}", value=nn.ModuleList())
+
+        # for each possible weld path...
         for ix_keypoint in range(0, self.max_weld_num):
-            self.linears_x.append(nn.Linear(in_channel, keypoint_num))
-            self.linears_y.append(nn.Linear(in_channel, keypoint_num))
-            self.linears_z.append(nn.Linear(in_channel, keypoint_num))
+            # for each spacial dimension (x, y, z)...
+            for d in self.spacial_dims:
+                # we append a Linear module to the corresponding ModuleList
+                self.__getattr__(name=f"linear_{d}").append(nn.Linear(in_channel, self.keypoint_num))
+
+    def _get_attr_from_index(self, dim: str):
+        self.lin_radix = "linear_"
+        return f"linear_{dim}"
 
     def forward(self, input):
-        res = torch.zeros(size=(8, 5, 3)).cuda()
-        for ix_weld_path, (linear_x, linear_y, linear_z) in enumerate(zip(self.linears_x,
-                                                                          self.linears_y,
-                                                                          self.linears_z)):
+        f"""
+        Input expect input of size: ({self.num_classes},
+                                     {self.max_weld_num},
+                                     {self.keypoint_num},
+                                     {len(self.spacial_dims)})
+        """
+
+        res = torch.zeros(size=(self.num_classes, self.max_weld_num, self.keypoint_num, len(self.spacial_dims))).cuda()
+
+        # for each weld path
+        linears = [self.__getattr__(f"linear_x"),
+                   self.__getattr__(f"linear_y"),
+                   self.__getattr__(f"linear_z")]
+        for ix_weld_path, (linear_x, linear_y, linear_z) in enumerate(zip(*linears)):
+            res[ix_weld_path, :, 0] = linear_x(input)
+            res[ix_weld_path, :, 1] = linear_y(input)
+            res[ix_weld_path, :, 2] = linear_z(input)
+        return res
+
+
+class PointNetClassificationHead(nn.Module):
+    def __init__(self, in_channel:int, max_weld_num: int = 8, classes_num: int = 12):
+        super(PointNetRegressionHead, self).__init__()
+
+        self.spacial_dims = ['x', 'y', 'z']
+        self.lin_radix = "linear_"
+        self.cls_radix = "cls_"
+
+        self.max_weld_num = max_weld_num
+        self.num_classes = classes_num
+
+        self.lins = nn.ModuleList()
+
+        # for each weld type...
+        for ix_keypoint in range(0, self.max_weld_num):
+            # we add a module list
+            self.__setattr__(f"one_hot_{ix_keypoint}", nn.ModuleList())
+
+        # for each possible weld path...
+        for ix_keypoint in range(0, self.max_weld_num):
+            # for each spacial dimension (x, y, z)...
+            for d in self.spacial_dims:
+                # we append a Linear module to the corresponding ModuleList
+                self.__getattr__(f"one_hot_{ix_keypoint}").append(nn.Linear(in_channel, self.num_classes))
+
+    def _get_attr_from_index(self, dim: str):
+        return f"{self.lin_radix}{dim}"
+
+    def forward(self, input):
+        f"""
+        Input expect input of size: ({self.num_classes},
+                                     {self.max_weld_num},
+                                     {len(self.spacial_dims)})
+        """
+
+        res = torch.zeros(size=(self.num_classes, self.max_weld_num, len(self.spacial_dims))).cuda()
+
+        # for each weld path
+        linears = [self.__getattr__(self._get_attr_from_index(dim='x')),
+                   self.__getattr__(self._get_attr_from_index(dim='y')),
+                   self.__getattr__(self._get_attr_from_index(dim='z'))]
+        for ix_weld_path, (linear_x, linear_y, linear_z) in enumerate(zip(*linears)):
             res[ix_weld_path, :, 0] = linear_x(input)
             res[ix_weld_path, :, 1] = linear_y(input)
             res[ix_weld_path, :, 2] = linear_z(input)

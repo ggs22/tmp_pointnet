@@ -35,14 +35,15 @@ class GetModel(nn.Module):
                                                        group_all=True)
         self.feature_propagation3 = PointNetFeaturePropagation(in_channel=1536, mlp=[256, 256])
         self.feature_propagation2 = PointNetFeaturePropagation(in_channel=576, mlp=[256, 128])
-        self.feature_propagation1 = PointNetFeaturePropagation(in_channel=150+additional_channel-14, mlp=[128, 128])
+        self.feature_propagation1 = PointNetFeaturePropagation(in_channel=150+additional_channel-16, mlp=[128, 128])
         self.conv1 = nn.Conv1d(128, 128, 1)
         self.bn1 = nn.BatchNorm1d(128)
         self.drop1 = nn.Dropout(0.5)
         self.conv2 = nn.Conv1d(128, num_classes, 1)
         self.regression_head = PointNetRegressionHead(in_channel=128 * num_point, keypoint_num=5)
+        # self.classification_head = nn.Linear(in_features=128 * num_point, out_features=num_classes)
 
-    def forward(self, xyz, cls_label):
+    def forward(self, xyz):
         # Set Abstraction layers
         batch_size, input_channels, num_points = xyz.shape  # Batch, Channels, Num points?
         if self.normal_channel:
@@ -57,34 +58,26 @@ class GetModel(nn.Module):
         # Feature Propagation layers
         l2_points = self.feature_propagation3(l2_xyz, l3_xyz, l2_points, l3_points)
         l1_points = self.feature_propagation2(l1_xyz, l2_xyz, l1_points, l2_points)
-        cls_label_one_hot = cls_label.view(batch_size, cls_label.shape[2], 1).repeat(1, 1, num_points)
         l0_points = self.feature_propagation1(l0_xyz,
                                               l1_xyz,
-                                              torch.cat([cls_label_one_hot, l0_xyz, l0_points], 1),
+                                              torch.cat([l0_xyz, l0_points], 1),
                                               l1_points)
         # Keypoints Regression FC layers
         feat = F.relu(self.bn1(self.conv1(l0_points)))
 
         flat_feat = torch.flatten(feat)
-        res = self.regression_head(flat_feat)
+        regression_res = self.regression_head(flat_feat)
+        classification_res = F.softmax(self.classification_head(flat_feat), dim=0)
 
-        # # part seg FC layers
-        # feat = F.relu(self.bn1(self.conv1(l0_points)))
-        # x = self.drop1(feat)
-        # x = self.conv2(x)
-        # x = F.log_softmax(x, dim=1)
-        # x = x.permute(0, 2, 1)
-
-        return res
+        return regression_res, classification_res
 
 
 class get_loss(nn.Module):
     def __init__(self):
         super(get_loss, self).__init__()
 
-    def forward(self, pred, target):
-        total_loss = F.mse_loss(pred, target, reduction='mean')
+    def forward(self, pred_kpts, target_kpts, pred_one_hot=None, target_one_hot=None):
+        mse_loss = F.mse_loss(pred_kpts, target_kpts, reduction='mean')
+        bce_loss = F.binary_cross_entropy(pred_one_hot, target_one_hot, reduction='mean')
 
-        # TODO add bce loss to adapt for classification
-
-        return total_loss
+        return mse_loss + bce_loss, mse_loss, bce_loss
