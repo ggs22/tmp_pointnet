@@ -95,3 +95,5 @@ voxel51-eta==0.7.0
 wrapt==1.14.1
 wsproto==1.1.0
 xmltodict==0.13.0
+open3d~=0.17.0
+tqdm~=4.65.0
