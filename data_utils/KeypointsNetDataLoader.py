@@ -5,10 +5,10 @@ import open3d as o3d
 import torch
 import torch.nn.functional as F
 import utils.paths_utils as pu
+import pickle
 
 from torch.utils.data import Dataset
 from pathlib import Path
-
 
 
 def pc_z_normalize(pc):
@@ -85,7 +85,12 @@ class KeypointsDataset(Dataset):
         for files_pair in self.meta:
             self.datapath.append(files_pair)
 
-        self.cache = dict()  # from index to sample & target tuple
+        self.cache_path = pu.get_cache_path()
+        if Path(self.cache_path).exists():
+            with open(file=str(self.cache_path), mode='r') as f:
+                self.cache = pickle.load(file=f)
+        else:
+            self.cache = dict()  # from index to sample & target tuple
         self.cache_size = 20000
 
     def __getitem__(self, index):
